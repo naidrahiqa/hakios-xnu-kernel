@@ -1,5 +1,9 @@
 #include <stdint.h>
 #include <stddef.h>
+#include "board.h"
+
+#define PANEL_W             BOARD_PANEL_W
+#define PANEL_H             BOARD_PANEL_H
 
 #define MT6768_WDT_BASE     0x10007000ULL
 #define MT6768_WDT_MODE     0x00
@@ -152,18 +156,18 @@ void diag_main(uint64_t dtb_addr) {
     /* 3. Paint screen if valid RAM */
     if (fb_base >= DRAM_BASE && fb_base < DRAM_BASE + DRAM_SIZE) {
         volatile uint32_t *fb = (volatile uint32_t *)fb_base;
-        /* Screen resolution: 720 x 1640 = 1,180,800 pixels */
+        /* Screen resolution: PANEL_W x PANEL_H */
         /* Top half: Electric Cyan (0xFF00E5FF) */
-        for (uint32_t i = 0; i < 720 * 820; i++) {
+        for (uint32_t i = 0; i < PANEL_W * (PANEL_H / 2); i++) {
             fb[i] = 0xFF00E5FF;
         }
         /* Bottom half: Deep Violet (0xFF7C4DFF) */
-        for (uint32_t i = 720 * 820; i < 720 * 1640; i++) {
+        for (uint32_t i = PANEL_W * (PANEL_H / 2); i < PANEL_W * PANEL_H; i++) {
             fb[i] = 0xFF7C4DFF;
         }
 
         /* Flush CPU cache to DRAM so DMA engine sees new pixels */
-        for (uint64_t p = fb_base; p < fb_base + 720 * 1640 * 4; p += 64) {
+        for (uint64_t p = fb_base; p < fb_base + PANEL_W * PANEL_H * 4; p += 64) {
             __asm__ volatile("dc cvac, %0" : : "r"(p));
         }
         __asm__ volatile("dsb sy; isb");
@@ -198,10 +202,10 @@ void diag_main(uint64_t dtb_addr) {
                 uint32_t color = (loop_count % 10 == 0) ? 0xFFFFFFFF : 0xFFFF0055;
                 for (int y = 50; y < 200; y++) {
                     for (int x = 50; x < 200; x++) {
-                        fb[y * 720 + x] = color;
+                        fb[y * PANEL_W + x] = color;
                     }
                 }
-                for (uint64_t p = fb_base + 50 * 720 * 4; p < fb_base + 200 * 720 * 4; p += 64) {
+                for (uint64_t p = fb_base + 50 * PANEL_W * 4; p < fb_base + 200 * PANEL_W * 4; p += 64) {
                     __asm__ volatile("dc cvac, %0" : : "r"(p));
                 }
                 __asm__ volatile("dsb sy; isb");

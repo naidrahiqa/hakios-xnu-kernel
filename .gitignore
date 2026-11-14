@@ -7,9 +7,13 @@
 !/README.ru.md
 !/docs/
 !/xl
+!/xl_mtk
+!/xl_selene
 !/xl_x6826b
 !/mkpackfs.py
 !/mkxnuimg.py
+!/mkxnuimg_mtk.py
+!/mkxnuimg_selene.py
 !/mkxnuimg_x6826b.py
 !/xnu-build.sh
 !/xnu-env.sh
@@ -116,6 +120,7 @@ __pycache__/
 *.metallib
 *.dylib
 *.dtb
+!/prebuilt/uefi/*.dtb
 *.fd
 *.img
 *.bin

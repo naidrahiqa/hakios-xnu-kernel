@@ -1,8 +1,11 @@
 /*
- * The phone's SPI2 (0x11012000), where its touch screen is: a Synaptics/OmniVision TCM
- * controller (Android drives it as omnivision_tcm_spi, see docs/touch-handover.md). Registers follow Linux's
- * drivers/spi/spi-mt65xx.c for "mediatek,mt6765-spi", which is what the phone's own device tree
- * calls this controller.
+ * The controller the touch screen hangs on: SPI2 (0x11012000) on the X6826B, where the part is a
+ * Synaptics/OmniVision TCM one (Android drives it as omnivision_tcm_spi, see
+ * docs/touch-handover.md); SPI0 (0x1100a000) on the Redmi 10 family, where it is a Novatek part.
+ * The base is the board's (board.h); everything below -- register layout, FIFO, bit clock -- is
+ * the same block, and both boards wire it to pins 25-28 at function 2. Registers follow Linux's
+ * drivers/spi/spi-mt65xx.c for "mediatek,mt6765-spi", which is what the phones' device trees
+ * call this controller.
  *
  * Polled, FIFO only, no DMA and no interrupt -- the same shape as the eMMC reader beside it.
  * Device memory with the MMU off: 32-bit accesses, nothing clever.
@@ -11,8 +14,9 @@
 #define MTKSPI_H
 
 #include <stdint.h>
+#include "board.h"
 
-#define SPI2_BASE            0x11012000ULL
+#define SPI2_BASE            BOARD_TOUCH_SPI_BASE
 #define INFRACFG_BASE        0x10001000ULL
 #define TOPCKGEN_BASE        0x10000000ULL
 
@@ -91,7 +95,7 @@
 #define SPI2_PIN_CLK         27
 #define SPI2_PIN_MI          28
 
-static void spi_pins_to_spi2(void)
+static inline void spi_pins_to_spi2(void)
 {
 	uint32_t mode = rd32(GPIO_BASE + GPIO_MODE3);
 
@@ -111,7 +115,7 @@ static void spi_pins_to_spi2(void)
  */
 #define SPI_TICKS 2                             /* 26 MHz over four: 6.5, under the 8 the chip allows */
 
-static void spi_setup(void)
+static inline void spi_setup(void)
 {
 	wr32(TOPCKGEN_BASE + CLK_CFG_2_CLR, SPI_SEL_FIELD | SPI_SEL_PDN);
 	__asm__ volatile("dsb sy");
@@ -154,7 +158,7 @@ static inline void pin_settle(void)
 	(void)rd32(GPIO_BASE + GPIO_DIN0);
 }
 
-static void spi_pins_to_gpio(void)
+static inline void spi_pins_to_gpio(void)
 {
 	uint32_t mode = rd32(GPIO_BASE + GPIO_MODE3);
 
@@ -180,7 +184,7 @@ static void spi_pins_to_gpio(void)
  * follow a stream sent any faster -- which is why the firmware goes out this way and not through
  * the SPI controller, whose bytes come back to back with nothing between them.
  */
-static void spi_bitbang_xfer(const uint8_t *tx, uint8_t *rx, uint32_t len, uint32_t byte_gap_us)
+static inline void spi_bitbang_xfer(const uint8_t *tx, uint8_t *rx, uint32_t len, uint32_t byte_gap_us)
 {
 	int idle = 1;
 
@@ -230,7 +234,7 @@ __attribute__((unused)) static void touch_reset(void)
  * The chip select is asserted for the whole of it, which is what a TCM exchange wants. At most
  * SPI_FIFO_BYTES at a time -- the FIFO is all this uses.
  */
-static int spi_xfer(const uint8_t *tx, uint8_t *rx, uint32_t len)
+static inline int spi_xfer(const uint8_t *tx, uint8_t *rx, uint32_t len)
 {
 	uint32_t words = (len + 3) / 4;
 

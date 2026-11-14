@@ -16,6 +16,7 @@
 #define MTKDBG_H
 
 #include <stdint.h>
+#include "board.h"
 #include "font8x16.h"
 
 #define RAMOOPS_CONSOLE      0x4d09f000ULL
@@ -35,12 +36,16 @@
 #define TOPRGU_RESTART_KEY   0x1971u
 #define TOPRGU_SWRST_KEY     0x1209u
 
-/* LK's framebuffer (mblock "framebuffer"), the layer LK shows the logo on. */
-#define LK_FB_BASE           0x787b0000ULL
-#define LK_FB_SIZE           0x1050000ULL
-#define LK_FB_PITCH          2944u      /* 736 pixels: LK aligns the width to 32 */
-#define PANEL_W              720u
-#define PANEL_H              1640u
+/*
+ * LK's framebuffer (mblock "framebuffer"), the layer LK shows the logo on. Which panel, and where
+ * LK put it, is the board's: board.h. (The loader prefers the live OVL0 registers anyway; these
+ * are the fallback and the sanity check they are checked against.)
+ */
+#define LK_FB_BASE           BOARD_LK_FB_BASE
+#define LK_FB_SIZE           BOARD_LK_FB_SIZE
+#define LK_FB_PITCH          BOARD_LK_FB_PITCH
+#define PANEL_W              BOARD_PANEL_W
+#define PANEL_H              BOARD_PANEL_H
 
 #define DISP_MUTEX_EN        0x14001020ULL
 #define DISP_MUTEX_RUN       0x14001024ULL

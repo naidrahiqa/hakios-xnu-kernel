@@ -22,7 +22,7 @@ TEST_FLAGS=(-DXNU_WDT_SECONDS=0 -DXNU_CORES=$CORES -DXNU_WATCH_SECONDS=$WATCH
 for tool in adb fastboot python3; do
 	command -v $tool >/dev/null || { echo "xnu-cycle.sh: $tool is not in PATH"; exit 1; }
 done
-[ -f "$ROOT/build-payload.bin" ] || { echo "xnu-cycle.sh: no build-payload.bin: make it with ./xl_x6826b build"; exit 1; }
+[ -f "$ROOT/build-payload.bin" ] || { echo "xnu-cycle.sh: no build-payload.bin: make it with ./xl_selene build"; exit 1; }
 mkdir -p "$(dirname "$OUT")"
 "$ROOT/mtkloader/build.sh" "${TEST_FLAGS[@]}" "$@" >/dev/null
 python3 "$ROOT/mtkloader/build_flashed.py" >/dev/null
