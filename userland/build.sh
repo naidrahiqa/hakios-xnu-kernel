@@ -145,7 +145,7 @@ if [ -n "$APPLEID" ]; then
 fi
 mkdir -p obj
 
-if [ -z "$PREBUILT" ] && ! command -v ld64 >/dev/null; then PREBUILT=1; fi
+PREBUILT=${PREBUILT:-1}
 if [ -n "$PREBUILT" ]; then
 	echo "build.sh: not compiling, using the programs in prebuilt/userland"
 	for f in ../prebuilt/userland/*; do
