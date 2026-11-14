@@ -73,7 +73,7 @@ linktree() { # linktree DIR NEW: NEW (which is not there yet) becomes DIR's tree
 sha256() { if command -v sha256sum >/dev/null; then sha256sum "$@"; else shasum -a 256 "$@"; fi; }
 
 CC="xnu-clang -arch arm64 -Os -static -nostdlib -ffreestanding -fno-stack-protector -fno-builtin -Wall -Wextra"
-LD="-Wl,-e,_start -Wl,-pagezero_size,0x100000000"
+LD="-Wl,-e,_start -Wl,-pagezero_size,0x100000000 -Wl,-platform_version,ios,16.5,16.5"
 DYN="xnu-clang -arch arm64 -isysroot ${THEOS:-$HOME/theos}/sdks/iPhoneOS16.5.sdk -O1"
 IOS=../ios165
 CACHE=$IOS/20F66__iPhone10,3_6
@@ -168,17 +168,22 @@ fi
 rm -rf root
 mkdir -p root/sbin root/bin root/etc root/share root/LaunchDaemons
 cp obj/init root/sbin/init
+cp obj/init root/sbin/launchd
 cp obj/child root/bin/child
+[ -f obj/hello ] && cp obj/hello root/bin/hello
+ln -sf . root/redwood
 # The data volume into the flash and back (src/var_store.c), and the job that saves it when a run
 # ends: the program and its job together, away from the iOS job list below, which several working
 # copies are editing at once.
 [ -f obj/var_store ] && cp obj/var_store root/bin/
 cp com.redwood.varstore.plist com.redwood.nullcomm.plist root/LaunchDaemons/
 echo "Darwin on redwood: image built $(date '+%Y-%m-%d %H:%M')" > root/etc/motd
+cp ${RC:-rc.launchd} root/etc/rc
+cp ${RC_JOBS:-rc.jobs.unlock} root/etc/rc.jobs
 # 300000 bytes, byte i = (i*31 + (i>>8)) & 0xff; init verifies it through read() and mmap()
 python3 -c "import sys; sys.stdout.buffer.write(bytes((i*31 + (i>>8)) & 0xff for i in range(300000)))" > root/share/pattern.bin
 if [ -d $IOS/rootfs/usr/lib ]; then
-	if [ -z "$PREBUILT" ]; then
+	if [ -z "$PREBUILT" ] && [ -d "${THEOS:-$HOME/theos}/sdks/iPhoneOS16.5.sdk" ]; then
 		# ordinary dynamically linked programs of our own, built against the iOS SDK
 		$DYN -o obj/hello_dyn src/hello_dyn.c
 		$DYN -framework CoreFoundation -o obj/svc_test src/svc_test.c
@@ -294,7 +299,9 @@ if [ -d $IOS/rootfs/usr/lib ]; then
 			[ -f $M/air_run ] && cp $M/air_run obj/air_run
 		fi
 	fi
-	cp obj/hello_dyn obj/svc_test obj/surf_test obj/rwtouch obj/cputop obj/nullxpc obj/mg_test root/bin/
+	for bin in hello_dyn svc_test surf_test rwtouch cputop nullxpc mg_test; do
+		[ -f obj/$bin ] && cp obj/$bin root/bin/
+	done
 	[ -n "$BT" ] && [ -f obj/bt_test ] && cp obj/bt_test root/bin/     # (src/bt_test.m: CoreBluetooth's scan, for Bluetooth runs)
 	[ -f obj/cpu_test ] && cp obj/cpu_test root/bin/        # (a prebuilt/ from before this program has none)
 	[ -f obj/cow_test ] && cp obj/cow_test root/bin/
@@ -424,7 +431,7 @@ with open(path, 'w') as f:
 		done
 	fi
 	cp ${RC:-rc.launchd} root/etc/rc
-	cp ${RC_JOBS:-rc.jobs} root/etc/rc.jobs
+cp ${RC_JOBS:-rc.jobs.unlock} root/etc/rc.jobs
 	# QUIET=1: launchd's own standard error goes nowhere (src/init.c). It says a few thousand
 	# lines about its own business in the first minutes and pushes everything else out of the
 	# kernel's log; the daemons keep their own standard error on the console all the same.

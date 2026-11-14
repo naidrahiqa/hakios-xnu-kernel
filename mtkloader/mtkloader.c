@@ -111,7 +111,7 @@ static const uint8_t core_order[8] = { 0, 7, 6, 1, 2, 3, 4, 5 };
 #define TIMER_PROBE         0
 #endif
 #ifndef MENU_DEFAULT_XNU
-#define MENU_DEFAULT_XNU    0
+#define MENU_DEFAULT_XNU    1
 #endif
 /*
  * 1: the kernel's text console on the screen (-v). It is a slow way to run -- scrolling reads
@@ -144,9 +144,9 @@ static const uint8_t core_order[8] = { 0, 7, 6, 1, 2, 3, 4, 5 };
 #define XNU_ROOT_ARG        "rd=md0"
 #endif
 #if XNU_VERBOSE
-#define XNU_BOOT_ARGS       "debug=0x8 serial=3 " XNU_ROOT_ARG " -v " XNU_EXTRA_ARGS " loader_return_after=" XNU_RETURN_AFTER
+#define XNU_BOOT_ARGS       "debug=0x8 serial=0 " XNU_ROOT_ARG " -v " XNU_EXTRA_ARGS " loader_return_after=" XNU_RETURN_AFTER
 #else
-#define XNU_BOOT_ARGS       "debug=0x8 serial=3 " XNU_ROOT_ARG " " XNU_EXTRA_ARGS " loader_return_after=" XNU_RETURN_AFTER
+#define XNU_BOOT_ARGS       "debug=0x8 serial=0 " XNU_ROOT_ARG " " XNU_EXTRA_ARGS " loader_return_after=" XNU_RETURN_AFTER
 #endif
 
 #define CHAIN_OFFSET        0x40000u
@@ -422,7 +422,7 @@ static void display_find(void)
 
 	fb_base = LK_FB_BASE;
 	fb_pitch = LK_FB_PITCH;
-	if (addr >= LK_FB_BASE && addr < LK_FB_BASE + LK_FB_SIZE && pitch >= PANEL_W * 4 && pitch <= 4096) {
+	if (addr >= LK_FB_BASE && addr < LK_FB_BASE + LK_FB_SIZE && pitch >= PANEL_W * 4 && pitch <= 8192) {
 		fb_base = addr;
 		fb_pitch = pitch;
 	}
@@ -433,26 +433,19 @@ static void display_alpha_off(void)
 {
 	uint32_t con = rd32(OVL0_BASE + OVL_L0_CON);
 	wr32(OVL0_BASE + OVL_L0_CON, con & ~(1u << 8));
-	out("OVL0 L0_CON ");
-	out_hex(con);
-	out(" -> ");
-	out_hex(rd32(OVL0_BASE + OVL_L0_CON));
-
-	/*
-	 * LK composes two layers: layer 0 is the picture, and layer 3 is its own overlay with the
-	 * warning it prints on an unlocked phone ("Orange State: your device has been unlocked"),
-	 * from a buffer of its own. Nothing of iOS writes to that buffer, so the words stayed on
-	 * top of the home screen. Leave the overlay's layers out of what the hardware composes.
-	 */
-	uint32_t src = rd32(OVL0_BASE + OVL_SRC_CON);
-	wr32(OVL0_BASE + OVL_SRC_CON, src & 1u);
+	wr32(OVL0_BASE + 0x020, ((uint32_t)PANEL_H << 16) | (uint32_t)PANEL_W); /* OVL_ROI_SIZE: full screen */
+	wr32(OVL0_BASE + 0x038, ((uint32_t)PANEL_H << 16) | (uint32_t)PANEL_W); /* OVL_L0_SRC_SIZE: 1080x2400 */
+	wr32(OVL0_BASE + 0x03c, 0);                                              /* OVL_L0_OFFSET: reset (0, 0) */
+	/* Disable OVL Layers 1, 2, 3 (LK Boot Logo / Overlay) */
+	wr32(OVL0_BASE + 0x050, 0); /* OVL_L1_CON */
+	wr32(OVL0_BASE + 0x070, 0); /* OVL_L2_CON */
+	wr32(OVL0_BASE + 0x090, 0); /* OVL_L3_CON */
+	wr32(OVL0_BASE + 0xf60, 0); /* OVL_L1_ADDR */
+	wr32(OVL0_BASE + 0xf80, 0); /* OVL_L2_ADDR */
+	wr32(OVL0_BASE + 0xfa0, 0); /* OVL_L3_ADDR */
+	wr32(OVL0_BASE + OVL_SRC_CON, 1u);                                       /* compose Layer 0 ONLY */
 	wr32(DISP_MUTEX_EN, 1);
 	wr32(DISP_MUTEX_RUN, 1);
-	out(", SRC_CON ");
-	out_hex(src);
-	out(" -> ");
-	out_hex(rd32(OVL0_BASE + OVL_SRC_CON));
-	out("\n");
 }
 
 /* ---- payload and the kernel's symbols ---- */
@@ -994,6 +987,7 @@ static void __attribute__((noreturn)) chain_android(void)
 #if TOUCH_PROBE
 	touch_hand_back();
 #endif
+	wdt_disable();
 	out("starting Android\n");
 
 	volatile uint32_t *dst = (volatile uint32_t *)CHAIN_STUB_PA;
@@ -1454,6 +1448,12 @@ void xnu_returned(uint64_t log_pa, uint64_t len, uint64_t reason, uint64_t code,
 	dbg_puts("\n=== what the screen showed when XNU came back ===\n");
 	read_screen();
 	fbc.base = screen;
+	display_alpha_off();
+	fb_rect(0, 0, PANEL_W, PANEL_H, 0xff000000u);
+	dcache_clean_range(fb_base, (uint64_t)PANEL_H * fb_pitch);
+	fbc.x = 0;
+	fbc.y = fbc.top = 0;
+	fbc.scale = 1;
 	fbc.fg = 0xffffff40u;
 	out("\n=== XNU returned to mtkloader: reason ");
 	out_dec(reason);
@@ -1481,22 +1481,42 @@ void xnu_returned(uint64_t log_pa, uint64_t len, uint64_t reason, uint64_t code,
 		}
 		out("\n");
 	}
-	if (reason != 1) {
+	if (reason != 1 && reason != 2) {
 		show_panic_string(&xsyms);
-		show_backtrace();
+		if (xsyms.panic_str && xnu_rd64(xsyms.panic_str)) {
+			show_backtrace();
+		}
 	}
 	out("=== XNU log (");
 	out_dec(len);
 	out(" bytes) ===\n");
+	if (len > 0 && len <= 4 * 1024 * 1024) {
+		const volatile char *log = (const volatile char *)log_pa;
+		uint64_t tail = len > 8000 ? 8000 : len;
+		uint64_t start_at = len - tail;
+		while (start_at < len && log[start_at] != '\n') {
+			start_at++;
+		}
+		if (start_at < len) start_at++;
+		fbc.fg = 0xffffffffu;
+		for (uint64_t i = start_at; i < len; i++) {
+			char c = log[i];
+			if (c) out_putc(c);
+		}
+		fbc.fg = 0xffffff40u;
+		dcache_clean_range(fb_base, (uint64_t)PANEL_H * fb_pitch);
+	}
 	if (len > 4 * 1024 * 1024) {
 		sp.n = 0;
 	}
 	save_log(&sp, 1);
 	dbg_puts("=== end of XNU log ===\n");
 	save_host_keep(&xsyms);
-	show_log_tail(40);
-	dbg_delay_ms(20000);
-	reset_board();
+	dcache_clean_range(fb_base, (uint64_t)PANEL_H * fb_pitch);
+	out("\n[mtkloader] Halted. Hold Vol-Down + Power to enter Fastboot.\n");
+	for (;;) {
+		__asm__ volatile("wfe");
+	}
 }
 
 /*
@@ -2180,6 +2200,11 @@ static void __attribute__((noreturn)) run_xnu(void)
 				vm_hi = sg->vmaddr + sg->vmsize;
 			}
 			uint64_t dst_pa = kva_to_pa(sg->vmaddr);
+			out(" seg ");
+			out_hex(dst_pa);
+			out(" (");
+			out_dec(sg->vmsize / 1024);
+			out(" KB)\n");
 			memset((void *)dst_pa, 0, sg->vmsize);
 			memcpy((void *)dst_pa, pi.kernel + sg->fileoff, sg->filesize);
 		} else if (lc->cmd == LC_UNIXTHREAD) {
@@ -2310,7 +2335,7 @@ static void __attribute__((noreturn)) run_xnu(void)
 		memcpy((void *)rd_pa, pi.ramdisk, pi.ramdisk_size);
 	}
 	/* and the big one off the flash, if it is there (with XNU_ROOT_EMMC the kernel reads it itself) */
-	uint64_t sys_size = XNU_ROOT_EMMC ? 0 : load_system_image();
+	uint64_t sys_size = 0;
 	uint64_t sys_pa = sys_size ? SYSTEM_PA : 0;
 	uint64_t sys_span = (sys_size + PAGE_SIZE_MAX - 1) & ~(PAGE_SIZE_MAX - 1);
 
@@ -2422,11 +2447,19 @@ static void __attribute__((noreturn)) run_xnu(void)
 	 * showed through the home screen.
 	 */
 	fb_rect(0, 0, PANEL_W, PANEL_H, 0xff000000u);
+	fbc.x = 0;
+	fbc.y = fbc.top = 0;
+	fbc.scale = BOARD_DISPLAY_SCALE;
 	for (uint64_t at = fb_base; at < fb_base + (uint64_t)PANEL_H * fb_pitch; at += 64) {
 		__asm__ volatile("dc cvac, %0" : : "r"(at));
 	}
 	__asm__ volatile("dsb sy");
-	out("Jumping to XNU...\n");
+	out("Jumping to XNU: entry ");
+	out_hex(kva_to_pa(entry_va));
+	out(" ba ");
+	out_hex(ba_pa);
+	out("\n");
+	dbg_delay_ms(1500);
 	jump_to_kernel(kva_to_pa(entry_va), ba_pa);
 	__builtin_unreachable();
 }
@@ -3411,6 +3444,7 @@ void mtkloader_main(uint64_t dtb)
 	wdt_disable();
 	lk_dtb = dtb;
 	display_find();
+	display_alpha_off();
 	fbcon_init(fb_base, fb_pitch, 0, 1);
 
 	if (mark == MARK_DONE) {
@@ -3468,15 +3502,23 @@ void mtkloader_main(uint64_t dtb)
 	if (!boot_choice()) {
 		chain_android();
 	}
+#if XNU_WDT_SECONDS
+	uint32_t t = XNU_WDT_SECONDS > 31 ? 31 : XNU_WDT_SECONDS;
+	marker_set(MARK_RUNNING);
+	wr32(TOPRGU_LENGTH, ((t * 32768u / 512u) << 5) | 0x8u);
+	wr32(TOPRGU_RESTART, TOPRGU_RESTART_KEY);
+	wr32(TOPRGU_MODE, TOPRGU_MODE_KEY | 0x1u);
+#endif
 	fb_rect(0, 0, PANEL_W, PANEL_H, 0xff000000u);
 	fbc.x = 0;
 	fbc.y = fbc.top = 0;
+	fbc.scale = BOARD_DISPLAY_SCALE;
 	fbc.fg = 0xff40ff40u;
-	out("== mtkloader: Darwin/XNU on X6826B (MT6768) ==\n");
+	out("== mtkloader: Darwin/XNU on " BOARD_NAME " ==\n");
 	fbc.fg = 0xffffffffu;
 	out("LK dtb ");
 	out_hex(dtb);
 	out("\n");
-	connsys_dt_report(dtb);         /* Wi-Fi step 1: what Android's tree says of CONNSYS (mtkconnsys.h) */
+	/* connsys_dt_report(dtb); */
 	run_xnu();
 }

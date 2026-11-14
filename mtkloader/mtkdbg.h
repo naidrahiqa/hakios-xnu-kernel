@@ -191,15 +191,31 @@ static inline void fbcon_newline(void)
 	uint32_t lh = 16 * fbc.scale;
 
 	fbc.x = 0;
-	fbc.y += lh;
-	if (fbc.y + lh > fbc.h) {
-		fbc.y = fbc.top;
+	if (fbc.y + lh * 2 > fbc.h) {
+		/* Scroll the screen up smoothly */
+		uint32_t scroll_lines = 4 * lh;
+		if (scroll_lines > fbc.h - fbc.top) {
+			scroll_lines = lh;
+		}
+		uint32_t copy_h = fbc.h - fbc.top - scroll_lines;
+		for (uint32_t y = 0; y < copy_h; y++) {
+			uint32_t *d = (uint32_t *)(fbc.base + (uint64_t)(fbc.top + y) * fbc.pitch);
+			const uint32_t *s = (const uint32_t *)(fbc.base + (uint64_t)(fbc.top + y + scroll_lines) * fbc.pitch);
+			for (uint32_t x = 0; x < fbc.w; x++) {
+				d[x] = s[x];
+			}
+		}
+		fb_rect(0, fbc.top + copy_h, fbc.w, scroll_lines, fbc.bg);
+		fbc.y = fbc.top + copy_h;
+		for (uint64_t at = fbc.base + (uint64_t)fbc.top * fbc.pitch; at < fbc.base + (uint64_t)fbc.h * fbc.pitch; at += 64) {
+			__asm__ volatile("dc cvac, %0" : : "r"(at));
+		}
+		__asm__ volatile("dsb sy");
+	} else {
+		fbc.y += lh;
 	}
-	/* clear the line about to be written, and a marker line under it */
+	/* clear the line about to be written */
 	fb_rect(0, fbc.y, fbc.w, lh, fbc.bg);
-	if (fbc.y + 2 * lh <= fbc.h) {
-		fb_rect(0, fbc.y + lh, fbc.w, 2, 0xffff3030u);
-	}
 }
 
 static inline void fbcon_putc(char c)

@@ -1188,8 +1188,25 @@ run_command(char *line)
 		if (flash_root_mode && strcmp(argv[1], "/sbin/launchd.ios") == 0) {
 			argv[1] = "/sbin/launchd";      /* the root is iOS's own volume: its launchd is that */
 		}
-		execve(argv[1], argv + 1, envp);
-		printf("%s: %s\n", argv[1], strerror(errno));
+		struct stat lst;
+		if (stat(argv[1], &lst) == 0) {
+			printf("exec: %s exists, size %lld, mode 0%o\n", argv[1], (long long)lst.st_size, lst.st_mode);
+		} else {
+			printf("exec: stat(%s) failed: %s\n", argv[1], strerror(errno));
+		}
+		char *l_argv[64];
+		int l_argc = 0;
+		l_argv[l_argc++] = (char *)"/sbin/launchd";
+		for (int i = 2; i < argc && l_argc < 63; i++) {
+			l_argv[l_argc++] = argv[i];
+		}
+		l_argv[l_argc] = NULL;
+		execve(argv[1], l_argv, envp);
+		printf("execve(%s): %s\n", argv[1], strerror(errno));
+		printf("[init] FATAL: execve returned! Pausing to preserve console.\n");
+		for (;;) {
+			usleep(1000000);
+		}
 		return;
 	}
 
@@ -1416,6 +1433,9 @@ main(int argc, char **argv, char **envp)
 	configure_vnodes();
 	run_rc(in_image("/etc/rc"));
 	printf("\n=== init: done ===\n");
+	for (int i = 0; i < 30; i++) {
+		usleep(1000000);
+	}
 	reboot(RB_HALT);
 	return failures != 0;
 }

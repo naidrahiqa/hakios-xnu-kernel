@@ -1,0 +1,3 @@
+/bin/child one two
+/bin/hello
+sleep 5
