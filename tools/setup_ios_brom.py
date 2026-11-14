@@ -154,7 +154,7 @@ def main():
     print("\n" + "="*50)
     print("[+] ALL DONE! Phone is ready to boot iOS 16.5!")
     print("="*50)
-    mtk.daloader.close()
+    mtk.port.close()
 
 
 if __name__ == "__main__":
