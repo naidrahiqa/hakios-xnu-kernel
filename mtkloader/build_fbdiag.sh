@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build fbdiag.img: fbdiag in front of Android's kernel for Redmi 10 (selene / eos).
+# Build fbdiag.img: fbdiag in front of Android's kernel for Redmi 10 family (selene / MT6769H).
 set -e
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
@@ -10,19 +10,8 @@ elif command -v ld.lld >/dev/null; then LLD=ld.lld
 else echo "$(basename "$0"): no ld.lld: run tools/get-zig.sh" >&2; exit 1; fi
 CFLAGS="--target=aarch64-linux-gnu -ffreestanding -nostdlib -fno-builtin -fno-stack-protector -mgeneral-regs-only -mstrict-align -O2 -Wall -Wextra"
 
-BOARD_FLAG=""
-for arg in "$@"; do
-	case "$arg" in
-		eos|BOARD=eos|-DBOARD_EOS) BOARD_FLAG="-DBOARD_EOS" ;;
-		selene|BOARD=selene|-DBOARD_SELENE) BOARD_FLAG="-DBOARD_SELENE" ;;
-	esac
-done
-if [ -z "$BOARD_FLAG" ]; then
-	[ "$BOARD" = "eos" ] && BOARD_FLAG="-DBOARD_EOS" || BOARD_FLAG="-DBOARD_SELENE"
-fi
-
-clang $CFLAGS $BOARD_FLAG -c "$HERE/fbdiag_start.S" -o "$HERE/fbdiag_start.o"
-clang $CFLAGS $BOARD_FLAG -c "$HERE/fbdiag.c" -o "$HERE/fbdiag.o"
+clang $CFLAGS "$@" -c "$HERE/fbdiag_start.S" -o "$HERE/fbdiag_start.o"
+clang $CFLAGS "$@" -c "$HERE/fbdiag.c" -o "$HERE/fbdiag.o"
 $LLD -T "$HERE/link.ld" --oformat binary "$HERE/fbdiag_start.o" "$HERE/fbdiag.o" -o "$HERE/fbdiag.bin"
 
 # Locate Android boot image: env ANDROID_BOOT, backup/boot_a.img, or fw-selene/boot_a.img
