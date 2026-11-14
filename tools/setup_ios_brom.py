@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/home/naidra/mtkclient/.venv/bin/python
 import binascii
 import os
 import struct
