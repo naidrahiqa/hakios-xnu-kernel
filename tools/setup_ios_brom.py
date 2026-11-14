@@ -35,13 +35,13 @@ def name_of(entry):
 def check_and_carve_gpt(mtk):
     print("[*] Checking eMMC GPT for 'xnusys' partition...")
     # Read Primary GPT (sectors 0..33 = 34 sectors = 17408 bytes)
-    pri = bytearray(mtk.daloader.readflash(addr=0, length=34 * 512, parttype="user", display=False))
+    pri = bytearray(mtk.daloader.readflash(addr=0, length=34 * 512, filename="", parttype="user", display=False))
     if len(pri) < 34 * 512:
         sys.exit("[-] Failed to read primary GPT")
 
     # Read Backup GPT (last 33 sectors = 16896 bytes)
     sec_addr = (TOTAL_SECTORS - 33) * 512
-    sec = bytearray(mtk.daloader.readflash(addr=sec_addr, length=33 * 512, parttype="user", display=False))
+    sec = bytearray(mtk.daloader.readflash(addr=sec_addr, length=33 * 512, filename="", parttype="user", display=False))
     if len(sec) < 33 * 512:
         sys.exit("[-] Failed to read backup GPT")
 
@@ -91,10 +91,10 @@ def check_and_carve_gpt(mtk):
     struct.pack_into("<I", sec, len(sec) - 512 + 16, crc32(bytes(sec[len(sec) - 512:len(sec) - 512 + hsize])))
 
     print("[*] Writing updated Primary GPT to eMMC...")
-    mtk.daloader.writeflash(addr=0, length=len(pri), filename=None, data=bytes(pri), parttype="user", display=False)
+    mtk.daloader.writeflash(addr=0, length=len(pri), filename="", wdata=bytes(pri), parttype="user", display=False)
 
     print("[*] Writing updated Backup GPT to eMMC...")
-    mtk.daloader.writeflash(addr=sec_addr, length=len(sec), filename=None, data=bytes(sec), parttype="user", display=False)
+    mtk.daloader.writeflash(addr=sec_addr, length=len(sec), filename="", wdata=bytes(sec), parttype="user", display=False)
     print("[+] Successfully carved 'xnusys' (4 GiB) in Primary and Backup GPT!")
 
 
