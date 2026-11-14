@@ -3,6 +3,9 @@
 # is named here.
 /*
 !/.gitignore
+!/AGENTS.md
+!/.agents/
+!/.agents/**
 !/README.md
 !/README.ru.md
 !/docs/
