@@ -99,6 +99,7 @@ def check_and_carve_gpt(mtk):
 
 
 def main():
+    os.chdir(ROOT)
     if not os.path.isfile(SYSTEM_APFS):
         sys.exit(f"Error: {SYSTEM_APFS} not found!")
     if not os.path.isfile(BOOT_IMG):
@@ -107,11 +108,12 @@ def main():
     print("[*] Initializing mtkclient...")
     config = MtkConfig()
     config.vid = 0x0e8d  # MediaTek Inc. ONLY
+    config.hwparam_path = ROOT
     mtk = Mtk(config=config, loglevel=20)
     da_handler = DaHandler(mtk, 20)
 
     print("[*] Waiting for Redmi 10 in BROM mode (Hold Vol Up + Vol Down & connect USB)...")
-    mtk = da_handler.connect(mtk, ".")
+    mtk = da_handler.connect(mtk, ROOT)
     if mtk is None:
         sys.exit("[-] Could not connect to device.")
 
