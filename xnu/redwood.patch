@@ -73,6 +73,7 @@ index 44274016a4cf..4ab7ca03b301 100644
 +bsd/dev/redwood_virtio_input.c	standard
 +bsd/dev/redwood_goodix.c	standard
 +bsd/dev/redwood_tcm.c	standard
++bsd/dev/redwood_novatek.c	standard
 +bsd/dev/redwood_mtkkeys.c	standard
 +bsd/dev/redwood_mali.c	standard
 +bsd/dev/redwood_connsys.c	standard
