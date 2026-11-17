@@ -476,14 +476,14 @@ IOMobileFramebuffer::publishModes(void)
  * framebuffer LK left, which the display engine reads continuously (OVL0 layer 0, video mode); a
  * frame copied into it while it is read shows on the panel as part this frame, part the last -- in
  * bands, the copy being split between fb_threads processors -- the strips of the slow-motion video
- * of 27 October. LK's framebuffer holds three pictures and a half (0x1050000 bytes at 0x787b0000,
- * mtkloader/mtkdbg.h): the second one is drawn while the first is shown, and then OVL0 is pointed at
+ * of 27 October. LK's framebuffer holds two pictures and a half (0x17e8000 bytes at 0x7e605000,
+ * mtkdbg.h): the second one is drawn while the first is shown, and then OVL0 is pointed at
  * it. Only when OVL0 reads where the console's framebuffer is and the second picture fits.
  */
-#define FLIP_OVL0               0x1400b000ULL           /* mtkloader/mtkdbg.h: OVL0_BASE */
+#define FLIP_OVL0               0x1400b000ULL           /* mtkdbg.h: OVL0_BASE */
 #define FLIP_OVL_L0_ADDR        0xf40
-#define FLIP_LK_FB_BASE         0x787b0000ULL
-#define FLIP_LK_FB_SIZE         0x1050000ULL
+#define FLIP_LK_FB_BASE         0x7e605000ULL           /* selene: board.h's LK framebuffer */
+#define FLIP_LK_FB_SIZE         0x17e8000ULL
 extern "C" vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 extern "C" vm_offset_t ml_io_map_wcomb(vm_offset_t phys_addr, vm_size_t size);
 static TUNABLE(uint32_t, gFlipOn, "fb_flip", 0);
@@ -1311,6 +1311,18 @@ IOMobileFramebuffer::presenter(void)
 	}
 }
 
+static inline void flush_fb_region(uintptr_t start_va, size_t byte_len) {
+	const size_t cache_line_size = 64;
+	uintptr_t addr = start_va & ~(cache_line_size - 1);
+	uintptr_t end  = (start_va + byte_len + cache_line_size - 1) & ~(cache_line_size - 1);
+
+	for (; addr < end; addr += cache_line_size) {
+		__asm__ volatile("dc civac, %0" :: "r"(addr) : "memory");
+	}
+	__builtin_arm_dsb(0xf);
+	__builtin_arm_isb(0xf);
+}
+
 /* A swap's surfaces onto the panel, once the GPU is done with them. */
 void
 IOMobileFramebuffer::show(const uint8_t * swap, MiniIOSurface ** surfaces)
@@ -1423,10 +1435,13 @@ IOMobileFramebuffer::show(const uint8_t * swap, MiniIOSurface ** surfaces)
 			}
 		}
 	}
+
 	if (fFlip) {
 		fFront ^= 1;
 		fOvl[FLIP_OVL_L0_ADDR / 4] = fFlipPA[fFront];
 		__builtin_arm_dsb(0xf);
+	} else {
+		flush_fb_region((uintptr_t)fBase, (size_t)fPanelHeight * fRowBytes);
 	}
 	drawn = mach_absolute_time();
 	/*

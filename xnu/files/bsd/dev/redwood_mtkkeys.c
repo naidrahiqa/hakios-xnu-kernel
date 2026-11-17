@@ -2,6 +2,8 @@
  * The buttons of the Infinix Hot 20 (X6826B), as a source of button presses for
  * /dev/redwood-touch (sys/redwood_input.h). Only with boot-arg buttons=2: every address below
  * belongs to this phone; buttons=1 is the other phone's, in redwood_buttons.c.
+ * (The Redmi 10 / selene shares the hardware: the same keypad node 0x10010000.kp and the same
+ * MT6358 PMIC, so the same driver is right there -- docs/porting-mt6769-redmi.md.)
  *
  * Android's own device tree says where they are (the kp@10010000 node):
  *   volume up    the SoC's keypad controller, key 0 of its map ("kpd-hw-init-map" 0x73)
