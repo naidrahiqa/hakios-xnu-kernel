@@ -17,10 +17,11 @@
 # Nothing here writes to the phone: dd only reads (if=), sgdisk only prints (--android-dump), and the
 # script goes to the phone's shell on its standard input, not as a file.
 set -e
+S="${HAKIOS_SERIAL:?set HAKIOS_SERIAL to your target device serial}"
 case "$1" in
 android)
 	mkdir -p "$2"
-	adb shell 'su -c sh' > "$2/android.txt.new" <<'PHONE'
+	adb -s "$S" shell 'su -c sh' > "$2/android.txt.new" <<'PHONE'
 for d in sda sdb sdc sdd sde sdf; do
 	size=$(blockdev --getsize64 /dev/block/$d)
 	n=$(($(blockdev --getsz /dev/block/$d) / 8))         # (the phone's shell counts in 32 bits: sectors, not bytes)

@@ -100,7 +100,8 @@ def check_and_carve_gpt(mtk):
 
 def main():
     os.chdir(ROOT)
-    if not os.path.isfile(SYSTEM_APFS):
+    boot_only = "--boot-only" in sys.argv
+    if not boot_only and not os.path.isfile(SYSTEM_APFS):
         sys.exit(f"Error: {SYSTEM_APFS} not found!")
     if not os.path.isfile(BOOT_IMG):
         sys.exit(f"Error: {BOOT_IMG} not found!")
@@ -123,20 +124,23 @@ def main():
 
     print("[+] DA Stage 2 loaded successfully!")
 
-    # 1. Ensure xnusys partition exists
-    check_and_carve_gpt(mtk)
+    if not boot_only:
+        # 1. Ensure xnusys partition exists
+        check_and_carve_gpt(mtk)
 
-    # 2. Write system.apfs to xnusys
-    xnusys_addr = XNUSYS_SECTOR * 512
-    apfs_size = os.path.getsize(SYSTEM_APFS)
-    print(f"[*] Writing system.apfs ({apfs_size / (1024**3):.2f} GB) to 'xnusys' at sector {XNUSYS_SECTOR}...")
-    if not mtk.daloader.writeflash(addr=xnusys_addr,
-                                   length=apfs_size,
-                                   filename=SYSTEM_APFS,
-                                   parttype="user",
-                                   display=True):
-        sys.exit(f"[-] Failed to write {SYSTEM_APFS} to xnusys")
-    print("[+] Successfully wrote system.apfs to xnusys!")
+        # 2. Write system.apfs to xnusys
+        xnusys_addr = XNUSYS_SECTOR * 512
+        apfs_size = os.path.getsize(SYSTEM_APFS)
+        print(f"[*] Writing system.apfs ({apfs_size / (1024**3):.2f} GB) to 'xnusys' at sector {XNUSYS_SECTOR}...")
+        if not mtk.daloader.writeflash(addr=xnusys_addr,
+                                       length=apfs_size,
+                                       filename=SYSTEM_APFS,
+                                       parttype="user",
+                                       display=True):
+            sys.exit(f"[-] Failed to write {SYSTEM_APFS} to xnusys")
+        print("[+] Successfully wrote system.apfs to xnusys!")
+    else:
+        print("[*] Skipping system.apfs (--boot-only requested)")
 
     # 3. Write XNU boot image to boot_a
     boot_a_addr = BOOT_A_SECTOR * 512
