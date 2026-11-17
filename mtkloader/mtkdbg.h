@@ -47,15 +47,39 @@
 #define PANEL_W              BOARD_PANEL_W
 #define PANEL_H              BOARD_PANEL_H
 
-#define DISP_MUTEX_EN        0x14001020ULL
-#define DISP_MUTEX_RUN       0x14001024ULL
+/*
+ * DISP mutex 0 is the block at 0x14001000: one instance every 0x20 bytes, as Linux's mtk-mutex
+ * lays them out, so instance 0 is EN 0x20, the frame trigger 0x24, RST 0x28, MOD 0x2c and SOF 0x30.
+ * (Another MediaTek port drives 0x14016020: that is a different block, not this one on selene.)
+ */
+#define DISP_MUTEX_EN        0x14001020ULL      /* bit 0: the mutex is composing */
+#define DISP_MUTEX_TRIGGER   0x14001024ULL      /* write 1: start this frame's composition */
+#define DISP_MUTEX_RST       0x14001028ULL      /* write 1: forget the mutex's configuration */
 
+/*
+ * OVL0 (4 layers) and OVL0_2L (2 layers, where LK keeps the Mi boot logo), one 0x20-byte group per
+ * layer: CON 0x030, SRC_SIZE 0x038, OFFSET 0x03c, and the addresses together at 0xf40.
+ */
 #define OVL0_BASE            0x1400b000ULL
 #define OVL0_2L_BASE         0x1400c000ULL
+#define OVL_ROI_SIZE         0x020      /* (height << 16) | width of the region composed */
 #define OVL_SRC_CON          0x02c      /* a bit per layer the hardware composes */
 #define OVL_L0_CON           0x030
+#define OVL_L1_CON           0x050
+#define OVL_L2_CON           0x070
+#define OVL_L3_CON           0x090
+#define OVL_L0_SRC_SIZE      0x038
+#define OVL_L0_OFFSET        0x03c
 #define OVL_L0_PITCH         0x044
 #define OVL_L0_ADDR          0xf40
+#define OVL_L1_ADDR          0xf60
+#define OVL_L2_ADDR          0xf80
+#define OVL_L3_ADDR          0xfa0
+/* the same group on OVL0_2L, which has two layers */
+#define OVL2L_L0_CON         0x030
+#define OVL2L_L1_CON         0x050
+#define OVL2L_L0_ADDR        0xf40
+#define OVL2L_L1_ADDR        0xf60
 
 static inline uint32_t rd32(uint64_t a) { return *(volatile uint32_t *)a; }
 static inline void wr32(uint64_t a, uint32_t v) { *(volatile uint32_t *)a = v; }

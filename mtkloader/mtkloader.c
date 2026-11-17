@@ -428,44 +428,59 @@ static void display_find(void)
 	}
 }
 
-/* Opaque pixels only from here on: XNU's console writes alpha 0. */
+/*
+ * Layer 0 of OVL0 becomes the whole panel, opaque pixels only (XNU's console writes alpha 0), and
+ * the layers LK left over it are gone: 1..3 on OVL0, and all of them on the second overlay,
+ * DISP_OVL0_2L, which is where the Mi boot logo lives and which keeps composing whatever DRAM it
+ * was last pointed at however clean OVL0 is.
+ *
+ * A disabled layer's address is held at fb_base and not at 0: the engine still reads a layer's
+ * address for the frame in flight, and a read of 0 is the green band that needs a reboot to leave.
+ *
+ * The mutex is enabled and its frame triggered, but not reset: RST (0x28) forgets the MOD/SOF that
+ * say which modules compose this frame, and nothing here writes them back. The two registers whose
+ * silence is a blank panel are read back, so a phone whose display block is not where board.h says
+ * gets a line in the log instead of a dark screen.
+ */
 static void display_alpha_off(void)
 {
-	/* 1. Clear Mutex 0 EN first */
-	wr32(DISP_MUTEX_EN, 0);
-
-	/* 2. Configure DISP_OVL0: Layer 0 only, full screen ROI, reset offset */
+	uint32_t size = ((uint32_t)PANEL_H << 16) | (uint32_t)PANEL_W;
 	uint32_t con = rd32(OVL0_BASE + OVL_L0_CON);
+
 	wr32(OVL0_BASE + OVL_L0_CON, con & ~(1u << 8));
-	wr32(OVL0_BASE + 0x020, ((uint32_t)PANEL_H << 16) | (uint32_t)PANEL_W); /* OVL_ROI_SIZE: full screen */
-	wr32(OVL0_BASE + 0x038, ((uint32_t)PANEL_H << 16) | (uint32_t)PANEL_W); /* OVL_L0_SRC_SIZE: 1080x2400 */
-	wr32(OVL0_BASE + 0x03c, 0);                                              /* OVL_L0_OFFSET: reset (0, 0) */
+	wr32(OVL0_BASE + OVL_ROI_SIZE, size);
+	wr32(OVL0_BASE + OVL_L0_SRC_SIZE, size);
+	wr32(OVL0_BASE + OVL_L0_OFFSET, 0);
 	wr32(OVL0_BASE + OVL_L0_ADDR, (uint32_t)fb_base);
 
-	/* Disable OVL Layers 1, 2, 3 controls */
-	wr32(OVL0_BASE + 0x050, 0); /* OVL_L1_CON */
-	wr32(OVL0_BASE + 0x070, 0); /* OVL_L2_CON */
-	wr32(OVL0_BASE + 0x090, 0); /* OVL_L3_CON */
+	wr32(OVL0_BASE + OVL_L1_CON, 0);
+	wr32(OVL0_BASE + OVL_L2_CON, 0);
+	wr32(OVL0_BASE + OVL_L3_CON, 0);
+	wr32(OVL0_BASE + OVL_L1_ADDR, (uint32_t)fb_base);
+	wr32(OVL0_BASE + OVL_L2_ADDR, (uint32_t)fb_base);
+	wr32(OVL0_BASE + OVL_L3_ADDR, (uint32_t)fb_base);
+	wr32(OVL0_BASE + OVL_SRC_CON, 1u);              /* compose layer 0 only */
 
-	/* CRITICAL: DO NOT zero OVL_Ln_ADDR! Keep valid physical address so in-flight DMA never reads 0x0 / green */
-	wr32(OVL0_BASE + 0xf60, (uint32_t)fb_base); /* OVL_L1_ADDR */
-	wr32(OVL0_BASE + 0xf80, (uint32_t)fb_base); /* OVL_L2_ADDR */
-	wr32(OVL0_BASE + 0xfa0, (uint32_t)fb_base); /* OVL_L3_ADDR */
-	wr32(OVL0_BASE + OVL_SRC_CON, 1u);          /* compose Layer 0 ONLY */
+	wr32(OVL0_2L_BASE + OVL_SRC_CON, 0);            /* the logo's overlay: nothing composed */
+	wr32(OVL0_2L_BASE + OVL2L_L0_CON, 0);
+	wr32(OVL0_2L_BASE + OVL2L_L1_CON, 0);
+	wr32(OVL0_2L_BASE + OVL2L_L0_ADDR, (uint32_t)fb_base);
+	wr32(OVL0_2L_BASE + OVL2L_L1_ADDR, (uint32_t)fb_base);
 
-	/* 3. Completely disable all layers on DISP_OVL0_2L (where LK stashes the Mi boot logo) */
-	wr32(OVL0_2L_BASE + OVL_SRC_CON, 0);        /* all layers off */
-	wr32(OVL0_2L_BASE + 0x030, 0);              /* OVL_L0_CON = 0 */
-	wr32(OVL0_2L_BASE + 0x050, 0);              /* OVL_L1_CON = 0 */
-	wr32(OVL0_2L_BASE + 0xf40, (uint32_t)fb_base);
-	wr32(OVL0_2L_BASE + 0xf60, (uint32_t)fb_base);
-
-	/* 4. Commit via DISP_MUTEX0 and wait for VSYNC hardware latch (~25ms) */
 	wr32(DISP_MUTEX_EN, 1);
-	wr32(DISP_MUTEX_RUN, 1);
-	dbg_delay_ms(25);
+	wr32(DISP_MUTEX_TRIGGER, 1);
 
-	/* 5. Clean CPU cache over the entire framebuffer */
+	/* the writes go out over AXI: let them land before they are read back */
+	dbg_delay_ms(1);
+	__asm__ volatile("dsb sy");
+
+	if ((rd32(OVL0_BASE + OVL_SRC_CON) & 1u) == 0) {
+		dbg_puts("display: OVL0 SRC_CON does not take the write, layer 0 is not composed\n");
+	}
+	if ((rd32(DISP_MUTEX_EN) & 1u) == 0) {
+		dbg_puts("display: DISP_MUTEX0 does not take the write, check the block's base\n");
+	}
+
 	dcache_clean_range(fb_base, (uint64_t)PANEL_H * fb_pitch);
 	__asm__ volatile("dsb sy");
 }
