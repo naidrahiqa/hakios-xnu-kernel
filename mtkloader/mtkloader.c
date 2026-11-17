@@ -1,5 +1,5 @@
 /*
- * mtkloader: boots XNU on the Infinix Hot 20 (X6826B, MT6768) from boot_a, and brings Android
+ * mtkloader: boots XNU on the Xiaomi Redmi 10 (selene, MT6769H) from boot_a, and brings Android
  * back afterwards with XNU's log in pstore.
  *
  * The boot image's kernel (tools/chainboot.py) is this program, then Android's own kernel Image
@@ -14,8 +14,8 @@
  * The log ends up in /sys/fs/pstore/console-ramoops-0 under Android. See mtkdbg.h for the
  * screen and ramoops output.
  *
- * Which phone this is comes from board.h: one row per board, and building with nothing defined
- * gives the X6826B, unchanged.
+ * Which phone this is comes from board.h: this tree's board is selene (Redmi 10 family), and
+ * every hardware constant in the loader goes back to it.
  *
  * Display: the panel is video mode and keeps scanning OVL0 layer 0 (LK's framebuffer; where it
  * is, and the pitch, are the board's -- mtkdbg.h). LK enables per-pixel alpha on that layer, and XNU's
@@ -34,8 +34,8 @@
 
 /*
  * XNU's view of memory: one contiguous range that nothing else (LK, Android, TEE, ATF, the
- * framebuffer) uses. Which range, and how big, is the board's -- board.h (0xc0000000-0xfe000000
- * on the Infinix, 0x100000000-0xbff00000 on the Redmi), and I cannot describe a hole inside it.
+ * framebuffer) uses. Which range, and how big, is the board's -- board.h (0xc0000000, 992 MiB,
+ * clear of the reserved 0xfeff6000 region selene's /proc/iomem shows).
  */
 #define XNU_PHYS_BASE       BOARD_XNU_PHYS_BASE
 #define XNU_MEM_SIZE        BOARD_XNU_MEM_SIZE
@@ -55,9 +55,9 @@
 #ifndef XNU_WDT_SECONDS
 #define XNU_WDT_SECONDS     0
 #endif
-/* Seconds after which the second core takes a snapshot of XNU and resets; 0: no watcher. */
+/* Seconds after which the second core takes a snapshot of XNU and holds it on the panel; 0: no watcher. */
 #ifndef XNU_WATCH_SECONDS
-#define XNU_WATCH_SECONDS   0
+#define XNU_WATCH_SECONDS   150
 #endif
 /*
  * How many processors the device tree offers the kernel. It takes them from the head of
@@ -87,7 +87,7 @@ static const uint8_t core_order[8] = { 0, 7, 6, 1, 2, 3, 4, 5 };
 #endif
 /* loader_return_after: XNU comes back by itself after that long, with its log (loader_return.c) */
 #ifndef XNU_RETURN_AFTER
-#define XNU_RETURN_AFTER    "0"
+#define XNU_RETURN_AFTER    "120"
 #endif
 /* 1: always start XNU (tools/xnu-cycle.sh); 0: Android unless asked once (tools/boot-xnu.sh). */
 /* 1: look at the touch screen's SPI and report, then go back to Android (no XNU). */
@@ -123,7 +123,7 @@ static const uint8_t core_order[8] = { 0, 7, 6, 1, 2, 3, 4, 5 };
 #endif
 /* More for the kernel's command line: cores, the clock (epoch=), whatever a run wants to try. */
 #ifndef XNU_EXTRA_ARGS
-#define XNU_EXTRA_ARGS      "cpus=1"
+#define XNU_EXTRA_ARGS      "cpus=4 touchscreen=3 buttons=2 mali=1 fbshot=20"
 #endif
 /* The serial number iOS is told (the device tree's serial-number): a placeholder, not any real device's.
  * A real build sets its own with -DXNU_SERIAL=..., which is never committed. */
@@ -431,21 +431,43 @@ static void display_find(void)
 /* Opaque pixels only from here on: XNU's console writes alpha 0. */
 static void display_alpha_off(void)
 {
+	/* 1. Clear Mutex 0 EN first */
+	wr32(DISP_MUTEX_EN, 0);
+
+	/* 2. Configure DISP_OVL0: Layer 0 only, full screen ROI, reset offset */
 	uint32_t con = rd32(OVL0_BASE + OVL_L0_CON);
 	wr32(OVL0_BASE + OVL_L0_CON, con & ~(1u << 8));
 	wr32(OVL0_BASE + 0x020, ((uint32_t)PANEL_H << 16) | (uint32_t)PANEL_W); /* OVL_ROI_SIZE: full screen */
 	wr32(OVL0_BASE + 0x038, ((uint32_t)PANEL_H << 16) | (uint32_t)PANEL_W); /* OVL_L0_SRC_SIZE: 1080x2400 */
 	wr32(OVL0_BASE + 0x03c, 0);                                              /* OVL_L0_OFFSET: reset (0, 0) */
-	/* Disable OVL Layers 1, 2, 3 (LK Boot Logo / Overlay) */
+	wr32(OVL0_BASE + OVL_L0_ADDR, (uint32_t)fb_base);
+
+	/* Disable OVL Layers 1, 2, 3 controls */
 	wr32(OVL0_BASE + 0x050, 0); /* OVL_L1_CON */
 	wr32(OVL0_BASE + 0x070, 0); /* OVL_L2_CON */
 	wr32(OVL0_BASE + 0x090, 0); /* OVL_L3_CON */
-	wr32(OVL0_BASE + 0xf60, 0); /* OVL_L1_ADDR */
-	wr32(OVL0_BASE + 0xf80, 0); /* OVL_L2_ADDR */
-	wr32(OVL0_BASE + 0xfa0, 0); /* OVL_L3_ADDR */
-	wr32(OVL0_BASE + OVL_SRC_CON, 1u);                                       /* compose Layer 0 ONLY */
+
+	/* CRITICAL: DO NOT zero OVL_Ln_ADDR! Keep valid physical address so in-flight DMA never reads 0x0 / green */
+	wr32(OVL0_BASE + 0xf60, (uint32_t)fb_base); /* OVL_L1_ADDR */
+	wr32(OVL0_BASE + 0xf80, (uint32_t)fb_base); /* OVL_L2_ADDR */
+	wr32(OVL0_BASE + 0xfa0, (uint32_t)fb_base); /* OVL_L3_ADDR */
+	wr32(OVL0_BASE + OVL_SRC_CON, 1u);          /* compose Layer 0 ONLY */
+
+	/* 3. Completely disable all layers on DISP_OVL0_2L (where LK stashes the Mi boot logo) */
+	wr32(OVL0_2L_BASE + OVL_SRC_CON, 0);        /* all layers off */
+	wr32(OVL0_2L_BASE + 0x030, 0);              /* OVL_L0_CON = 0 */
+	wr32(OVL0_2L_BASE + 0x050, 0);              /* OVL_L1_CON = 0 */
+	wr32(OVL0_2L_BASE + 0xf40, (uint32_t)fb_base);
+	wr32(OVL0_2L_BASE + 0xf60, (uint32_t)fb_base);
+
+	/* 4. Commit via DISP_MUTEX0 and wait for VSYNC hardware latch (~25ms) */
 	wr32(DISP_MUTEX_EN, 1);
 	wr32(DISP_MUTEX_RUN, 1);
+	dbg_delay_ms(25);
+
+	/* 5. Clean CPU cache over the entire framebuffer */
+	dcache_clean_range(fb_base, (uint64_t)PANEL_H * fb_pitch);
+	__asm__ volatile("dsb sy");
 }
 
 /* ---- payload and the kernel's symbols ---- */
@@ -1113,26 +1135,42 @@ static void save_host_keep(const struct xnu_syms *s)
 	out(" lines dropped\n");
 }
 
-/* The last lines of what is in ramoops, on the lower part of the screen. */
+/* The last lines of what is in ramoops, drawn right below whatever is already on the panel; through a wrap too. */
 static void show_log_tail(uint32_t lines)
 {
-	uint32_t size = PLOG_HDR->size, start = PLOG_HDR->start, n = 0;
-	uint32_t top = PANEL_H - (lines + 1) * 16;
-	uint64_t i;
+	uint32_t size = PLOG_HDR->size, start = PLOG_HDR->start, cap = PLOG_CAP, n = 0;
+	uint32_t top = fbc.y; /* continue right below what is already on the panel */
+	if (top + (lines + 2) * 16 > PANEL_H) {
+		top = PANEL_H - (lines + 2) * 16;
+	}
+	uint32_t pos, begin, p;
 
-	if (!fbc.base || size == 0 || size != start) { /* only a log that has not wrapped */
+	if (!fbc.base || size == 0) {
 		return;
 	}
-	for (i = size; i > 0 && n <= lines; i--) {
-		n += PLOG_DATA[i - 1] == '\n';
+	/* The last byte written sits just behind `start`; walk back `lines` newlines from there. */
+	pos = (start + cap - 1) % cap;
+	begin = (start + cap - size) % cap;
+	for (uint32_t steps = 0; steps < size; steps++) {
+		if (PLOG_DATA[pos] == '\n' && ++n > lines) {
+			begin = pos;
+			break;
+		}
+		pos = (pos + cap - 1) % cap;
 	}
-	fb_rect(0, top - 4, PANEL_W, PANEL_H - top + 4, 0xff000000u);
-	fb_rect(0, top - 4, PANEL_W, 2, 0xffff3030u);
+	/* Red separator on the row the tail text will start on, then the text right under it. */
 	fbc.top = fbc.y = top;
 	fbc.x = 0;
 	fbc.scale = 1;
-	for (; i < size; i++) {
-		fbcon_putc(PLOG_DATA[i]);
+	fb_rect(0, top, PANEL_W, 1, 0xffff3030u);
+	fbc.y = top + 16;
+	p = begin;
+	for (uint32_t k = 0; k < size; k++) {
+		if (k && p == start) {
+			break;
+		}
+		fbcon_putc(PLOG_DATA[p]);
+		p = (p + 1) % cap;
 	}
 }
 
@@ -1772,6 +1810,26 @@ static void plog_flush(void)
 	dcache_clean_range(MARKER_PA, 192);
 }
 
+static inline void draw_heartbeat_dot(uint64_t fb_virt_base, uint32_t beat_index)
+{
+	if (beat_index == 0 || beat_index > 15) return;
+
+	uint32_t start_x = (PANEL_W - 32) - ((beat_index - 1) * 8);
+	uint32_t start_y = 16;
+	uint32_t color_green = 0xFF00FF00; /* ARGB8888 / BGRA8888 bright green */
+
+	for (uint32_t dy = 0; dy < 4; dy++) {
+		volatile uint32_t *row = (volatile uint32_t *)(fb_virt_base + (uint64_t)(start_y + dy) * fb_pitch);
+		for (uint32_t dx = 0; dx < 4; dx++) {
+			row[start_x + dx] = color_green;
+		}
+	}
+
+	uint64_t flush_start = fb_virt_base + (uint64_t)start_y * fb_pitch;
+	size_t flush_len = 4 * fb_pitch;
+	dcache_clean_range(flush_start, flush_len);
+}
+
 /*
  * XNU never came back (no timer, a hang): with its caches visible through our own cacheable
  * mapping, take what it shows and has written, put it into ramoops and reset the board.
@@ -1793,11 +1851,19 @@ void watcher_main(void)
 	dcache_clean_range((uint64_t)&watcher_started, 8);
 
 	uint64_t end = dbg_ticks() + dbg_freq() * XNU_WATCH_SECONDS;
+	uint64_t last_beat = 0;
 	while (dbg_ticks() < end) {
 		dcache_clean_range((uint64_t)&xnu_back, 8);
 		if (xnu_back) {
 			for (;;) {
 				__asm__ volatile("wfe");
+			}
+		}
+		if (xsyms.live && fb_base) {
+			uint64_t beat = *(volatile uint64_t *)kva_to_pa(xsyms.live + 8);
+			if (beat != last_beat) {
+				last_beat = beat;
+				draw_heartbeat_dot(fb_base, (uint32_t)beat);
 			}
 		}
 		dbg_delay_ms(100);
@@ -1809,8 +1875,17 @@ void watcher_main(void)
 		}
 	}
 
-	fbc.base = 0; /* the screen is XNU's: read it, do not draw on it */
+	uint64_t fb_keep = fbc.base;
+
+	fbc.base = 0; /* XNU's screen: read it before anything is drawn over it */
 	marker_set(MARK_DONE);
+	dbg_puts("[XNU's screen]\n");
+	read_screen();
+	fbc.base = fb_keep; /* from here the snapshot is drawn as well */
+	fb_rect(0, 0, PANEL_W, PANEL_H, 0xff000000u);
+	fbc.x = fbc.y = fbc.top = 0;
+	fbc.scale = 1;
+	fbc.fg = 0xffffff40u;
 	dbg_puts("\n=== watcher: XNU still running after " );
 	dbg_dec(XNU_WATCH_SECONDS);
 	dbg_puts(" s, snapshot ===\n");
@@ -1912,26 +1987,32 @@ void watcher_main(void)
 		dbg_puts("\n");
 	}
 
-	dbg_puts("\n=== what the screen shows ===\n");
-	read_screen();
+	dbg_puts("\n=== what the screen shows ===\n(captured at the top of this snapshot)\n");
 	show_panic_string(&xsyms);
 	if (xsyms.msgbufp && xnu_fp[3]) {
 		uint64_t mb = xnu_rd64(xsyms.msgbufp);
 		uint64_t w0 = xnu_rd64(mb), w1 = xnu_rd64(mb + 8), bufc = xnu_rd64(mb + 16);
 		int32_t size = (int32_t)(w0 >> 32), bufx = (int32_t)w1;
-		dbg_puts("--- kernel message buffer ---\n");
+		uint64_t fbs = fbc.base;
+
+		fbc.base = 0; /* the whole buffer can fill the log on its own: tail only, log only */
+		dbg_puts("--- kernel message buffer (tail) ---\n");
 		if (size > 0 && size <= 1024 * 1024 && bufx >= 0 && bufx <= size) {
-			for (int pass = 0; pass < 2; pass++) {
-				int from = pass == 0 ? bufx : 0, to = pass == 0 ? size : bufx;
-				for (int i = from; i < to; i++) {
-					char c = xnu_rd8(bufc + i);
-					if (c) {
-						dbg_putc(c);
-					}
+			int keep = size < 32768 ? size : 32768;
+			int from = bufx - keep;
+
+			while (from < 0) {
+				from += size;
+			}
+			for (int k = 0; k < keep; k++) {
+				char c = xnu_rd8(bufc + (from + k) % size);
+				if (c) {
+					dbg_putc(c);
 				}
 			}
 		}
 		dbg_puts("\n--- end of message buffer ---\n");
+		fbc.base = fbs;
 	}
 	if (xsyms.log && xsyms.log_len) {
 		uint32_t len = rd32(kva_to_pa(xsyms.log_len));
@@ -1942,8 +2023,17 @@ void watcher_main(void)
 	save_host_keep(&xsyms);
 	dbg_puts("=== end of watcher snapshot ===\n");
 	plog_flush();
-	psci_system_reset();
-	wdt_reset();
+	/*
+	 * No reset: a reset would clear the panel and start the same thirty seconds over again,
+	 * with the snapshot wiped on the next boot before it can be shown. Leave the tail of the
+	 * XNU log under what is on the panel and hold here until the power is removed.
+	 */
+	fbc.scale = 1;
+	show_log_tail(40);
+	dcache_clean_range(fb_base, (uint64_t)PANEL_H * fb_pitch);
+	for (;;) {
+		__asm__ volatile("wfe");
+	}
 }
 
 static void watcher_start(void)
@@ -2429,6 +2519,12 @@ static void __attribute__((noreturn)) run_xnu(void)
 
 	/* must happen on the core the kernel runs on, and before it sets its GIC up */
 	gic_fix_eoimode();
+	/* Ensure Group 1, default priority (0xa0), and PPI 27 / SGIs enabled in GICR for CPU0 */
+	wr32(GICR_SGI + 0x080, rd32(GICR_SGI + 0x080) | (1u << 27) | 0xffffu);
+	wr32(GICR_SGI + 0xd00, rd32(GICR_SGI + 0xd00) & ~((1u << 27) | 0xffffu));
+	*(volatile uint8_t *)(GICR_SGI + 0x400 + 27) = 0xa0;
+	wr32(GICR_SGI + 0x100, (1u << 27) | 0xffffu);
+	__asm__ volatile("dsb sy; isb");
 #if TIMER_PROBE
 	timer_probe();
 #endif
@@ -3079,7 +3175,8 @@ static int boot_choice(void)
 	fbc.base = 0;
 	dbg_puts(xnu ? "boot: Darwin / XNU (requested)\n" : "boot: Android\n");
 	fbc.base = screen;
-	fb_rect(0, 600, PANEL_W, 160, 0xff000000u);
+	display_alpha_off();
+	fb_rect(0, 0, PANEL_W, PANEL_H, 0xff000000u);
 	fbc.scale = 3;
 	fbc.x = 48;
 	fbc.y = 640;

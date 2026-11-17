@@ -33,4 +33,4 @@ if not android:
 
 subprocess.check_call([sys.executable, os.path.join(ROOT, 'tools', 'chainboot.py'), android,
                        os.path.join(HERE, 'mtkloader.bin'), os.path.join(ROOT, 'xnu-flashed-slot_a.img'),
-                       os.path.join(ROOT, 'build-payload.bin')])
+                       os.path.join(ROOT, 'build-payload.bin'), '--partition-size', '64M'])

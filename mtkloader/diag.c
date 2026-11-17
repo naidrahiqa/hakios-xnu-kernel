@@ -121,7 +121,7 @@ void diag_main(uint64_t dtb_addr) {
 
     /* 2. UART Greeting */
     uart_puts("\n\n[DIAG] ======================================\n");
-    uart_puts("[DIAG] Infinix Hot 20 (MT6768) Bare-Metal Test\n");
+    uart_puts("[DIAG] Redmi 10 selene (MT6769H) Bare-Metal Test\n");
     uart_puts("[DIAG] LK HANDOFF SUCCESSFUL! CPU IN _start\n");
     uart_puts("[DIAG] ======================================\n");
 

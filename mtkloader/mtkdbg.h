@@ -1,5 +1,5 @@
 /*
- * Debug output for bare-metal code on the X6826B (MT6768) that runs with the MMU off:
+ * Debug output for bare-metal code on the Redmi 10 (selene, MT6769H) that runs with the MMU off:
  *
  *  - plog_*: the ramoops console zone that Android's pstore keeps across a warm reset. What is
  *    written here shows up after the next Android boot as /sys/fs/pstore/console-ramoops-0.
@@ -51,6 +51,7 @@
 #define DISP_MUTEX_RUN       0x14001024ULL
 
 #define OVL0_BASE            0x1400b000ULL
+#define OVL0_2L_BASE         0x1400c000ULL
 #define OVL_SRC_CON          0x02c      /* a bit per layer the hardware composes */
 #define OVL_L0_CON           0x030
 #define OVL_L0_PITCH         0x044

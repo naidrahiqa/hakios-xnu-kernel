@@ -117,7 +117,7 @@ Read this document completely before editing files or executing commands.
 
 ### B. MediaTek Little Kernel OVL0 Compositing (Boot Logo)
 * **Quirk:** Little Kernel (LK) uses MediaTek Display Overlay (OVL0) multi-layer compositing. Layer 0 holds the console buffer, but Layers 1..3 continuously scan a separate DRAM buffer containing the Xiaomi / "Redmi" boot logo. Simply wiping Layer 0 leaves the logo persistently showing over the log.
-* **Rule:** In `mtkloader.c`, `display_alpha_off()` must explicitly disable Layers 1..3 (`OVL_L1_CON`, `OVL_L2_CON`, `OVL_L3_CON`), zero their DMA addresses (`0xf60`, `0xf80`, `0xfa0`), lock `OVL_SRC_CON = 1`, and commit `DISP_MUTEX`.
+* **Rule:** In `mtkloader.c`, `display_alpha_off()` must explicitly disable Layers 1..3 (`OVL_L1_CON`, `OVL_L2_CON`, `OVL_L3_CON`), keep their DMA addresses pointing to valid `fb_base` (`0xf60`, `0xf80`, `0xfa0` — never 0x0 to prevent green YUV tearing), lock `OVL_SRC_CON = 1`, and commit `DISP_MUTEX`.
 
 ### C. Framebuffer Console Hardware Scrolling
 * **Quirk:** Framebuffer console on Redmi 10 is 1080x2400. Text running past the bottom line previously stalled or caused log truncation.

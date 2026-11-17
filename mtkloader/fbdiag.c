@@ -232,7 +232,7 @@ void fbdiag_main(uint64_t dtb)
 		chain_android();
 	}
 
-	dbg_puts("== fbdiag v3 phase 1 (X6826B MT6768) ==\nx0(dtb)=");
+	dbg_puts("== fbdiag v3 phase 1 (selene MT6769H) ==\nx0(dtb)=");
 	dbg_hex(dtb, 10);
 	dbg_putc('\n');
 	report_sysregs();
