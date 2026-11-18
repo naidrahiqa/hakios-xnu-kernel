@@ -77,6 +77,13 @@ static int bq_present = -1, bq_status = -1;
 static int bq_vbus_mv = -1, bq_vbat_mv = -1, bq_ichg_ma = -1;
 static int bq_iinlim_ma = -1, bq_ichg_limit_ma = -1, bq_vreg_mv = -1;
 
+/* The last line the log printed, and the two ways a transaction can fail: the bus was not idle when
+ * it was taken (a line low at rest, so nothing is driven), or a slave held a line low while the
+ * clock was released (the clock stretch that never ended). Kept apart, because one says the board's
+ * pull-ups are missing and the other says the part is wedged. */
+static int bq_last_present = -2, bq_last_status = -2;
+static bool bus_held, i2c_fault;
+
 SYSCTL_NODE(_kern, OID_AUTO, bq2589x, CTLFLAG_RW | CTLFLAG_LOCKED, 0, "the Redmi 10's charger");
 SYSCTL_INT(_kern_bq2589x, OID_AUTO, present, CTLFLAG_RD | CTLFLAG_LOCKED,
     &bq_present, 0, "1 while the part sees VBUS good, 0 without a cable, -1 before the first reading");
@@ -119,15 +126,19 @@ pin_func(unsigned pin)
 static uint32_t saved_mode[2], saved_dir, saved_dout;
 static unsigned pins[2] = { PIN_SCL, PIN_SDA };
 
-/* A line is driven low, or let go for the pull-ups to raise. */
+/*
+ * A line is driven low, or let go for the pull-ups to raise. Letting go clears the direction first
+ * and only then sets the latch high: the other order drives the line high for a moment if it was
+ * being held low, and that pulse is a false edge on the bus.
+ */
 static void
 line(unsigned pin, bool high)
 {
 	uint32_t bank = PIN_BANK(pin), bit = PIN_BIT(pin);
 
 	if (high) {
-		wr(PIN_DOUT_SET(bank), bit);
 		wr(PIN_DIR_CLR(bank), bit);
+		wr(PIN_DOUT_SET(bank), bit);
 	} else {
 		wr(PIN_DOUT_CLR(bank), bit);
 		wr(PIN_DIR_SET(bank), bit);
@@ -171,9 +182,10 @@ bus_take(void)
 	saved_dir = rd(PIN_DIR(bank));
 	saved_dout = rd(PIN_DOUT(bank));
 
-	/* an input that would drive high if the function switch turns it into an output */
-	wr(PIN_DOUT_SET(bank), both);
+	/* inputs first, then the latch high: nothing here can drive the bus, and if the function switch
+	 * turns one of them into an output it drives high, never low */
 	wr(PIN_DIR_CLR(bank), both);
+	wr(PIN_DOUT_SET(bank), both);
 	for (unsigned i = 0; i < 2; i++) {
 		uint32_t mode = rd(PIN_MODE(pins[i]));
 
@@ -184,6 +196,7 @@ bus_take(void)
 	half_bit();
 	if (!line_level(PIN_SCL) || !line_level(PIN_SDA)) {
 		bus_give_back();
+		bus_held = true;
 		return false;
 	}
 	return true;
@@ -223,6 +236,16 @@ i2c_bit(bool out)
 	for (unsigned stretched = 0; !line_level(PIN_SCL) && stretched < 100; stretched++) {
 		half_bit();             /* a device may hold the clock low until it is ready */
 	}
+	if (!line_level(PIN_SCL)) {
+		/*
+		 * Half a millisecond and the clock is still low: a stuck bus, not a slow device. Give up
+		 * instead of reading data off it - SDA low there would look exactly like an acknowledge,
+		 * and every register would then come back as 0x00.
+		 */
+		i2c_fault = true;
+		line(PIN_SCL, false);
+		return false;
+	}
 	half_bit();
 	in = line_level(PIN_SDA);
 	line(PIN_SCL, false);
@@ -232,8 +255,11 @@ i2c_bit(bool out)
 static bool
 i2c_write(uint8_t byte)
 {
-	for (int bit = 7; bit >= 0; bit--) {
+	for (int bit = 7; bit >= 0 && !i2c_fault; bit--) {
 		i2c_bit((byte >> bit) & 1);
+	}
+	if (i2c_fault) {
+		return false;
 	}
 	return !i2c_bit(true);
 }
@@ -243,10 +269,14 @@ i2c_read(void)
 {
 	uint8_t byte = 0;
 
-	for (int bit = 7; bit >= 0; bit--) {
+	for (int bit = 7; bit >= 0 && !i2c_fault; bit--) {
 		byte = (uint8_t)(byte << 1 | i2c_bit(true));
 	}
-	i2c_bit(false);                 /* one byte a transaction: acknowledge it */
+	if (!i2c_fault) {
+		/* The last byte of a read is not acknowledged, I2C's way of saying "that is all";
+		 * the other way round tells the part it may keep sending. */
+		(void)i2c_bit(true);
+	}
 	return byte;
 }
 
@@ -256,6 +286,7 @@ reg_read(uint8_t reg, uint8_t *value)
 {
 	bool answered;
 
+	bus_held = i2c_fault = false;
 	if (!bus_take()) {
 		return false;
 	}
@@ -270,7 +301,7 @@ reg_read(uint8_t reg, uint8_t *value)
 	}
 	i2c_stop();
 	bus_give_back();
-	return answered;
+	return answered && !i2c_fault;
 }
 
 /* ---- what the registers say ------------------------------------------------------------------------ */
@@ -308,23 +339,52 @@ part_name(unsigned pn)
 	}
 }
 
+static const char *
+bq_why(void)
+{
+	if (bus_held) {
+		return "a line is low at rest, so nothing is driven onto it (no pull-up, or a slave holding the bus)";
+	}
+	if (i2c_fault) {
+		return "the clock stayed low after it was released (a slave holding the bus)";
+	}
+	return "the address was not acknowledged";
+}
+
+/*
+ * The part or the bus stopped answering: say why once, and put the sysctls back to "unknown"
+ * instead of leaving the last reading there as if it were current.
+ */
+static void
+bq_lost(const char *why)
+{
+	if (bq_last_present != -1) {
+		printf("bq2589x: nothing to read at 0x%02x on I2C7: %s\n", BQ_ADDRESS, why);
+		bq_last_present = -1;
+	}
+	bq_present = bq_status = -1;
+	bq_vbus_mv = bq_vbat_mv = bq_ichg_ma = -1;
+	bq_iinlim_ma = bq_ichg_limit_ma = bq_vreg_mv = -1;
+}
+
 static void
 bq_read(uint32_t verbose)
 {
 	uint8_t iinlim, ichg, vreg, status, fault, batv, sysv, tspct, vbusv, ichgr, id;
 	static int printed_part, printed_regs;
-	static int last_present = -2, last_status = -2;
 	int present, stat, vbus_mv, vbat_mv, ichg_ma;
 
 	if (!reg_read(BQ_REG_ID, &id)) {
-		if (last_present != -1) {
-			printf("bq2589x: nothing answers at 0x%02x on I2C7 (the bus at rest, the pins as the "
-			    "device tree names them)\n", BQ_ADDRESS);
-			last_present = -1;
-			bq_present = bq_status = -1;
-			bq_vbus_mv = bq_vbat_mv = bq_ichg_ma = -1;
-			bq_iinlim_ma = bq_ichg_limit_ma = bq_vreg_mv = -1;
-		}
+		bq_lost(bq_why());
+		return;
+	}
+	if (id == 0x00 || id == 0xff) {
+		/*
+		 * A whole byte of one level: SDA held low reads as 0x00, a bus with nothing on it floats
+		 * to 0xff - and both look like an acknowledge to a master that only counts ACKs.
+		 */
+		bq_lost(id == 0x00 ? "the part read back 0x00, SDA held low" :
+		    "the part read back 0xff, a bus with nothing on it");
 		return;
 	}
 	if (!printed_part) {
@@ -338,9 +398,11 @@ bq_read(uint32_t verbose)
 	    !reg_read(BQ_REG_BATV, &batv) || !reg_read(BQ_REG_SYSV, &sysv) ||
 	    !reg_read(BQ_REG_TSPCT, &tspct) || !reg_read(BQ_REG_VBUSV, &vbusv) ||
 	    !reg_read(BQ_REG_ICHGR, &ichgr)) {
+		bq_lost(bq_why());
 		return;
 	}
 	if (!reg_read(BQ_REG_IINLIM, &iinlim) || !reg_read(BQ_REG_ICHG, &ichg) || !reg_read(BQ_REG_VREG, &vreg)) {
+		bq_lost(bq_why());
 		return;
 	}
 
@@ -375,14 +437,14 @@ bq_read(uint32_t verbose)
 		bq_status = 1;
 	}
 
-	if (verbose >= 2 || present != last_present || stat != last_status) {
+	if (verbose >= 2 || present != bq_last_present || stat != bq_last_status) {
 		printf("bq2589x: %s, %s on %s (%u), vbus %d mV, vbat %d mV, ichg %d mA; "
 		    "limits iin %d mA, ichg %d mA, vreg %d mV; sys %d mV, ts %u%%, fault %#x\n",
 		    present ? "power good" : "no vbus", chrg_name(stat), vbus_name((status >> 5) & 7),
 		    (status >> 5) & 7, vbus_mv, vbat_mv, ichg_ma, bq_iinlim_ma, bq_ichg_limit_ma,
 		    bq_vreg_mv, 2304 + 20 * (sysv & 0x7f), tspct & 0x7f, fault);
-		last_present = present;
-		last_status = stat;
+		bq_last_present = present;
+		bq_last_status = stat;
 	}
 }
 

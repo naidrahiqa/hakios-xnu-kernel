@@ -137,7 +137,8 @@ Each step has the check that proves it. Do not start a step whose predecessor's 
     panfrost in user space), **the sensor hub** (`redwood_scp.c`, [sensors](sensors-x6826b.md)).
     `mtk_cpufreq=` and `mali_mhz=` change PLLs and, above some points, voltages: read your chip's table first.
 12. **The radios, the camera, the battery**: [Wi-Fi](wifi-x6826b.md) (CONNSYS from the phone's own firmware), [Bluetooth](bluetooth-mtk-porting.md),
-    [the camera](camera-mtk-porting.md), `redwood_mtkbatt.c` (the PMIC's gauge).
+    [the camera](camera-mtk-porting.md), `redwood_mtkbatt.c` (the PMIC's gauge), then the charger Android was charging with
+    (`redwood_bq2589x.c`, a BQ2589x on an I2C bus's two GPIOs, read only to start — [the facts and the order of work](charger-bq2589x-selene.md)).
 
 ## One run
 
