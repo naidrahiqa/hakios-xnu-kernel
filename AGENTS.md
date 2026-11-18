@@ -59,7 +59,7 @@ Read this document completely before editing files or executing commands.
 [ mtkloader.bin ] (Bare-metal loader, runs before MMU)
    ├─ Inits DRAM / memory maps
    ├─ Disables OVL0 Layers 1..3 (kills Xiaomi boot logo)
-   ├─ Sets up Framebuffer Console (FB @ 0x7c400000, 1080x2400)
+   ├─ Sets up Framebuffer Console (FB @ 0x7e605000, 1080x2400, 24 MB)
    ├─ Populates Apple DeviceTree & boot-args
    └─ Jumps to XNU kernel entry point
          │

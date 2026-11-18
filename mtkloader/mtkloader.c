@@ -626,8 +626,11 @@ static int gpt_find(const char *name, uint64_t *lba, uint64_t *blocks)
 	return 0;
 }
 
-/* Reads the image into SYSTEM_PA; returns its length, 0 if there is none to read. */
-static uint64_t load_system_image(void)
+/*
+ * Reads the image into SYSTEM_PA; returns its length, 0 if there is none to read.
+ * Unused with XNU_ROOT_EMMC (the default): the kernel reads the eMMC itself. Kept for the md0 path.
+ */
+__attribute__((unused)) static uint64_t load_system_image(void)
 {
 	uint64_t lba, blocks, size = 0, done = 0, t0 = dbg_ticks(), f = dbg_freq();
 

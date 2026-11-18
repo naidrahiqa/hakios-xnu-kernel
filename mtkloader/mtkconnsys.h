@@ -94,7 +94,8 @@ dt_words(const char *what, const uint8_t *value, uint32_t len)
 	out("\n");
 }
 
-static void
+/* Printed only when its call in mtkloader.c is uncommented (CONNSYS step 1); the header compiles either way. */
+__attribute__((unused)) static void
 connsys_dt_report(uint64_t dtb)
 {
 	const uint8_t *fdt = (const uint8_t *)(uintptr_t)dtb;
