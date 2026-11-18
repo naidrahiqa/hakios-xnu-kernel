@@ -29,16 +29,16 @@
 
 /*
  * Touch: Novatek NT36672C on SPI0 (0x1100a000, "mediatek,mt6765-spi", cs 0, 9.6 MHz), reset on
- * GPIO 92, interrupt on GPIO 1. The SPI pins are 25-28 at function 2.
+ * GPIO 92, interrupt on GPIO 1. The SPI pins are 25-28 at function 2. The loader only names the
+ * part and its bus; the lines are driven by the kernel's driver (xnu/files/bsd/dev/redwood_novatek.c).
  */
 #define BOARD_TOUCH_TCM        0
 #define BOARD_TOUCH_NAME       "novatek nt36672c"
 #define BOARD_TOUCH_SPI_BASE   0x1100a000ULL
-#define BOARD_TOUCH_RESET_GPIO 92u
-#define BOARD_TOUCH_IRQ_GPIO   1u
 
 /* Cortex-A75 at 2000 MHz (Helio G88) */
 #define BOARD_BIG_MHZ          2000u
+/* boot_a's size, which the packed image must stay under: read by mtkloader/build_flashed.py. */
 #define BOARD_BOOT_PARTITION_SIZE (64u << 20)
 
 #endif /* MTKLOADER_BOARD_H */
