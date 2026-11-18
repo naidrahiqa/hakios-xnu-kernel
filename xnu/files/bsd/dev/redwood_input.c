@@ -230,6 +230,7 @@ redwood_input_init(void)
 	redwood_scp_init();
 	redwood_mtkcam_init();
 	redwood_mtkbatt_init();
+	redwood_bq2589x_init();
 	redwood_wifi_init();
 	redwood_adsp_init();
 }

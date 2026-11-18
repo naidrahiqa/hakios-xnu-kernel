@@ -29,7 +29,8 @@ eMMC on demand. A research bench, not a ROM.
   phone as discoverable. A confirmed pairing, the profiles and audio are not done (`docs/bluetooth-x6826b.md`).
 - **Battery** — the real percentage in the status bar (`mtkbatt=1`, `bsd/dev/redwood_mtkbatt.c`): Android's last number, carried on
   by the MT6358 fuel gauge. The charger — a BQ2589x on I2C7, address 0x6a (`docs/charger-bq2589x-selene.md`) —
-  is not driven yet.
+  has a read-only skeleton driver in the tree behind `bq2589x=1`, not yet run on the phone, and is not driven yet:
+  charging is still Android's.
 - **Apps & shell** — Settings, Clock, Calendar, Photos, Notes and more; Safari; Sileo with the Procursus prefix (dpkg/apt) in
   `/var/jb`; SSH to the phone by key.
 

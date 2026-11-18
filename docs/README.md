@@ -35,7 +35,7 @@ local kit and is not in the tree: each one sets the boot-args and the list of jo
 
 | | |
 | --- | --- |
-| [charger-bq2589x-selene.md](charger-bq2589x-selene.md) | The charger: which part it is (not the RT9471 the README used to name), the bus and its pins, the registers, and the order of the driver |
+| [charger-bq2589x-selene.md](charger-bq2589x-selene.md) | The charger: which part it is (not the RT9471 the README used to name), the bus and its pins, the registers, the order of the driver, and where the work stands |
 
 ## Graphics
 

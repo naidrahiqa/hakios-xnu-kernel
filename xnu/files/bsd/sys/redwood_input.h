@@ -85,6 +85,7 @@ void redwood_connsys_init(void);        /* boot-arg connsys_step=N: the Infinix'
 void redwood_pwrap_lock(void);          /* the MT6358 PMIC wrapper (0x1000d000) takes one transaction at a time: the camera, the keys/GPU-voltage and CONNSYS drivers each hold this for a whole one */
 void redwood_pwrap_unlock(void);
 void redwood_mtkbatt_init(void);        /* boot-arg mtkbatt=1: the Infinix's battery from the PMIC's BATADC, to iOS's power source */
+void redwood_bq2589x_init(void);        /* boot-arg bq2589x=1: the Redmi 10's charger (BQ2589x on I2C7), read only */
 void redwood_mtkcam_init(void);         /* boot-arg mtkcam=1: the Infinix's main camera (S5K JN1), one capture into memory, then all off */
 /* CONNSYS's memory (Android's consys-reserve-memory), and the AP's the Wi-Fi's DMA and BTIF's FIFO use (its
  * wifi-reserve-memory): both outside XNU's, which begins at 0xc0000000 (mtkloader.c) */

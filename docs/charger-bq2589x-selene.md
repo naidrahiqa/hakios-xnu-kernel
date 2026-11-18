@@ -1,7 +1,8 @@
 # The charger on the Redmi 10 (selene): BQ2589x on I2C7
 
-What the phone itself says about its charger, and the order the driver is written in. This is the
-first step only — the facts. No driver code is in the tree yet, and the reason is at the end.
+What the phone itself says about its charger, what has been checked since, and the order the driver
+is written in. The facts come first; where the work stands is a section of its own near the end,
+because it moves while the facts do not.
 
 Everything below is read from the phone's own files, not from a datasheet's example circuit:
 
@@ -146,6 +147,36 @@ be written to get a reading.
    not something this kernel needs to invent; a write path is a separate decision, and until then
    the chip keeps the limits it already holds.
 
+## Where this stands
+
+Done, and in the tree:
+
+* The part, its node, its address and the other chargers on the bus, from the device tree and
+  Android's log. No RT9471 on this phone, in either file.
+* I2C7's pins: 175 and 176, no pinctrl group for them in the base tree or in either overlay of
+  `dtbo_a.img`, and MT6768's pin table putting them in function 0 as GPIO and function 1 as
+  SCL7/SDA7.
+* `mtkloader`'s `CHG_PROBE`, off by default so the normal loader is unchanged: build it with
+  `mtkloader/build.sh -DCHG_PROBE=1`, flash slot a, and it prints the pins as Android left them,
+  reads `REG0B`, `REG0C` and `REG14` by hand, puts the pins back and starts Android, so the log comes
+  back through pstore.
+* `xnu/files/bsd/dev/redwood_bq2589x.c`: a read-only driver behind `bq2589x=1`, bit-banging the same
+  two pins, logging the same three registers in the same hex (once, or every reading with
+  `bq2589x=2`) and then the decoded readings; wired into `redwood_input.c` and `redwood.patch`.
+  The same numbers are on `kern.bq2589x` (`present`, `status`, `vbus_mv`, `vbat_mv`, `ichg_ma`,
+  `iinlim_ma`, `ichg_limit_ma`, `vreg_mv`), so a boot with it on can be read without the log.
+
+Not done yet:
+
+* Neither has run on the phone. The probe has not been flashed, and the driver has never been
+  compiled into a kernel — there is no XNU source tree or SDK on this workstation.
+* Nothing writes to the part, so charging is still Android's and the status bar's answer comes from
+  `redwood_mtkbatt.c` as before.
+
+The next run with the phone connected: the probe first, then the driver, then compare their `REG0B`,
+`REG0C` and `REG14` lines — the same registers read over the same two pins by two different pieces of
+code is the check that the bit-bang is right. After that, step 4 of the order of work.
+
 ## Why the driver code is a read-only skeleton
 
 `xnu/files/bsd/dev/redwood_bq2589x.c` is that first step as kernel code: boot-arg `bq2589x=1`
@@ -163,10 +194,5 @@ What is still open, and why it stops at reading:
   the driver has only been syntax-checked against stub headers, never compiled into a kernel, and
   the Redmi 10 is not connected to run a loader probe or a boot.
 
-Step 1 and 2 exist as a probe in `mtkloader/mtkloader.c`: build it with `mtkloader/build.sh
--DCHG_PROBE=1` (default off, so the normal loader is unchanged), flash slot a, and it prints the two
-pins' function, direction, latch and input level as Android left them, then reads `0x0B`, `0x0C` and
-`0x14` by hand and puts the pins back before starting Android - so the whole log comes back through
-pstore. The next run with the phone connected is that probe, then the kernel driver with its answers
-in hand. The driver prints `REG0B ... REG0C ... REG14 ...` in the same hex, once on its first reading
-(and every reading with `bq2589x=2`), so the loader's line and XNU's can be put side by side.
+Steps 1 and 2 are the probe and the driver above; see "Where this stands" for what has run and what
+has not.
