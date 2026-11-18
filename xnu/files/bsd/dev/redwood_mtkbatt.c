@@ -25,7 +25,10 @@
  *    at -357 mA is 94% by it where Android says 99. If the two ways are more than 30 points apart the voltage is believed.
  * A charger on the port: RGS_CHRDET, bit 5 of CHR_CON0 (0xa88), the name Android's PMIC header gives it; 0x62 with the cable
  * in. It has not been seen at 0 yet (the cable is how the phone is run). "Charging" is said only while the current goes in.
- * Not done: the charger itself (RT9471 on I2C5: nothing sets or feeds it here), the temperature (25 degrees is said).
+ * Not done: the charger itself — a BQ2589x (TI, compatible ti,bq25890) on I2C7 at 0x11004000, address 0x6a,
+ * its GPIO 20 interrupt and GPIO 152 charge-enable; the phone's device tree has no RT9471, though this
+ * comment used to say so. Nothing sets or feeds it here (docs/charger-bq2589x-selene.md). Also the
+ * temperature (25 degrees is said).
  * One transaction at a time on the wrapper: redwood_pwrap_lock() is the camera's and CONNSYS's too.
  */
 #include <kern/clock.h>

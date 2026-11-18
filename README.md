@@ -28,7 +28,8 @@ eMMC on demand. A research bench, not a ROM.
 - **Bluetooth** — the MT6631's controller behind iOS's own `bluetoothd`: apps see real BLE devices in a scan, and Settings shows the
   phone as discoverable. A confirmed pairing, the profiles and audio are not done (`docs/bluetooth-x6826b.md`).
 - **Battery** — the real percentage in the status bar (`mtkbatt=1`, `bsd/dev/redwood_mtkbatt.c`): Android's last number, carried on
-  by the MT6358 fuel gauge. The charger chip (RT9471) is not driven yet.
+  by the MT6358 fuel gauge. The charger — a BQ2589x on I2C7, address 0x6a (`docs/charger-bq2589x-selene.md`) —
+  is not driven yet.
 - **Apps & shell** — Settings, Clock, Calendar, Photos, Notes and more; Safari; Sileo with the Procursus prefix (dpkg/apt) in
   `/var/jb`; SSH to the phone by key.
 

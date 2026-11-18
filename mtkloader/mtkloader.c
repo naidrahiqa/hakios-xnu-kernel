@@ -102,6 +102,10 @@ static const uint8_t core_order[8] = { 0, 7, 6, 1, 2, 3, 4, 5 };
 #ifndef CAM_PROBE
 #define CAM_PROBE           0
 #endif
+/* 1: read I2C7's two pins and the charger's status registers, then Android (read only, nothing written). */
+#ifndef CHG_PROBE
+#define CHG_PROBE           0
+#endif
 /* 1: read the eMMC and report, then go back to Android (no XNU). */
 #ifndef MSDC_TEST
 #define MSDC_TEST           0
@@ -3552,6 +3556,301 @@ rails_off:
 static const char cam_probe_flag[] = "DARWIN-REDWOOD:CAM-PROBE";
 #endif /* CAM_PROBE */
 
+#if CHG_PROBE
+/*
+ * The charger probe: the two pins of I2C7 and the BQ2589x on it, read only.
+ *
+ * The device tree names I2C7's clock and data as GPIO 175 and 176 (scl-gpio-id/sda-gpio-id), and
+ * MT6768's pin table gives both of them function 0 as their GPIO and function 1 as SCL7/SDA7. So
+ * the first thing printed is the function Android left them in, with direction, output latch and
+ * what the pad reads, before anything here changes a pin. They are then taken as plain pins the way
+ * the camera probe takes i2c4's, and if both lines are high at rest the part at 0x6a is asked for
+ * REG0B (status), REG0C (fault) and REG14 (part number). Nothing is written to the part and no
+ * register of the I2C controller is used; the pins go back before Android starts. A line low at
+ * rest means the pull-ups are not doing their job: the part is then left alone.
+ */
+#define CHG_PIN_SCL             175
+#define CHG_PIN_SDA             176
+#define CHG_ADDR                0x6a
+#define CHG_REG_STATUS          0x0b
+#define CHG_REG_FAULT           0x0c
+#define CHG_REG_ID              0x14
+
+struct chg_pin_state {
+	uint32_t mode, dir, dout, din;
+};
+
+static void
+chg_pin_save(struct chg_pin_state *s, uint32_t pin)
+{
+	s->mode = (rd32(GPIO_BASE + 0x300 + 0x10 * (pin / 8)) >> (4 * (pin % 8))) & 0xfu;
+	s->dir = (rd32(GPIO_BASE + 0x000 + 0x10 * (pin / 32)) >> (pin % 32)) & 1u;
+	s->dout = (rd32(GPIO_BASE + 0x100 + 0x10 * (pin / 32)) >> (pin % 32)) & 1u;
+	s->din = (rd32(GPIO_BASE + 0x200 + 0x10 * (pin / 32)) >> (pin % 32)) & 1u;
+}
+
+static void
+chg_pin_mode(uint32_t pin, uint32_t mode)
+{
+	uint64_t a = GPIO_BASE + 0x300 + 0x10 * (uint64_t)(pin / 8);
+	uint32_t shift = 4 * (pin % 8);
+
+	wr32(a, (rd32(a) & ~(0xfu << shift)) | (mode << shift));
+}
+
+/* let go (an input: the pull-ups take it high) or pull low (output 0), as the camera probe does */
+static void
+chg_line(uint32_t pin, int high)
+{
+	uint32_t bank = pin / 32, bit = 1u << (pin % 32);
+
+	if (high) {
+		wr32(GPIO_BASE + 0x008 + 0x10 * bank, bit);
+	} else {
+		wr32(GPIO_BASE + 0x108 + 0x10 * bank, bit);
+		wr32(GPIO_BASE + 0x004 + 0x10 * bank, bit);
+	}
+}
+
+static int
+chg_read(uint32_t pin)
+{
+	return (rd32(GPIO_BASE + 0x200 + 0x10 * (pin / 32)) >> (pin % 32)) & 1u;
+}
+
+static void
+chg_pin_restore(const struct chg_pin_state *s, uint32_t pin)
+{
+	uint32_t bank = pin / 32, bit = 1u << (pin % 32);
+
+	wr32(GPIO_BASE + (s->dout ? 0x104 : 0x108) + 0x10 * bank, bit);
+	wr32(GPIO_BASE + (s->dir ? 0x004 : 0x008) + 0x10 * bank, bit);
+	chg_pin_mode(pin, s->mode);
+}
+
+static void
+chg_bb_delay(void)
+{
+	dbg_delay_us(5);
+}
+
+static void
+chg_scl(int high)
+{
+	chg_line(CHG_PIN_SCL, high);
+	if (high) {
+		for (int i = 0; i < 200 && !chg_read(CHG_PIN_SCL); i++) {	/* a device may hold it low */
+			dbg_delay_us(5);
+		}
+	}
+	chg_bb_delay();
+}
+
+static void
+chg_sda(int high)
+{
+	chg_line(CHG_PIN_SDA, high);
+	chg_bb_delay();
+}
+
+static void
+chg_bb_start(void)
+{
+	chg_sda(1);
+	chg_scl(1);
+	chg_sda(0);
+	chg_scl(0);
+}
+
+static void
+chg_bb_stop(void)
+{
+	chg_sda(0);
+	chg_scl(1);
+	chg_sda(1);
+}
+
+/* one byte out; 1 if the part pulled SDA low for the ninth clock (an acknowledge) */
+static int
+chg_bb_write(uint8_t byte)
+{
+	int ack;
+
+	for (int i = 7; i >= 0; i--) {
+		chg_sda((byte >> i) & 1);
+		chg_scl(1);
+		chg_scl(0);
+	}
+	chg_sda(1);
+	chg_scl(1);
+	ack = !chg_read(CHG_PIN_SDA);
+	chg_scl(0);
+	return ack;
+}
+
+static uint8_t
+chg_bb_read(void)
+{
+	uint8_t byte = 0;
+
+	chg_sda(1);
+	for (int i = 0; i < 8; i++) {
+		chg_scl(1);
+		byte = (uint8_t)((byte << 1) | (chg_read(CHG_PIN_SDA) ? 1 : 0));
+		chg_scl(0);
+	}
+	chg_sda(0);                     /* one byte a transaction: acknowledge it */
+	chg_scl(1);
+	chg_scl(0);
+	chg_sda(1);
+	return byte;
+}
+
+/* write a one-byte register address, then read one byte; 0 if everything acknowledged */
+static int
+chg_read8(uint8_t reg, uint8_t *byte)
+{
+	int missed = 0;
+
+	chg_bb_start();
+	missed |= !chg_bb_write((uint8_t)(CHG_ADDR << 1)) << 0;
+	missed |= !chg_bb_write(reg) << 1;
+	chg_bb_start();                 /* a repeated start */
+	missed |= !chg_bb_write((uint8_t)((CHG_ADDR << 1) | 1)) << 2;
+	*byte = chg_bb_read();
+	chg_bb_stop();
+	return missed;
+}
+
+static const char *
+chg_vbus_name(uint32_t stat)
+{
+	static const char *names[] = {
+		"no input", "SDP", "CDP", "DCP", "MaxCharge DCP", "unknown adapter", "non-standard adapter", "OTG"
+	};
+
+	return stat < 8 ? names[stat] : "?";
+}
+
+static const char *
+chg_chrg_name(uint32_t stat)
+{
+	static const char *names[] = { "not charging", "pre-charge", "fast charge", "done" };
+
+	return stat < 4 ? names[stat] : "?";
+}
+
+static const char *
+chg_part_name(uint32_t pn)
+{
+	switch (pn) {
+	case 3:
+		return "BQ25890";
+	case 7:
+		return "BQ25895";
+	case 0:
+		return "BQ25896";
+	default:
+		return "not a BQ2589x part number";
+	}
+}
+
+static void
+chg_say_pin(const char *name, uint32_t pin, const struct chg_pin_state *s)
+{
+	out("  gpio");
+	out_dec(pin);
+	out(" (");
+	out(name);
+	out("): function ");
+	out_dec(s->mode);
+	out(", dir ");
+	out_dec(s->dir);
+	out(", dout ");
+	out_dec(s->dout);
+	out(", din ");
+	out_dec(s->din);
+	out("\n");
+}
+
+static void
+chg_probe(void)
+{
+	struct chg_pin_state scl, sda;
+	uint8_t status = 0, fault = 0, id = 0;
+	int missed;
+
+	chg_pin_save(&scl, CHG_PIN_SCL);
+	chg_pin_save(&sda, CHG_PIN_SDA);
+	out("I2C7's pins as Android left them (function 0 is their GPIO, 1 is SCL7/SDA7):\n");
+	chg_say_pin("SCL", CHG_PIN_SCL, &scl);
+	chg_say_pin("SDA", CHG_PIN_SDA, &sda);
+
+	out("taking both as plain pins and letting them go\n");
+	chg_pin_mode(CHG_PIN_SCL, 0);
+	chg_pin_mode(CHG_PIN_SDA, 0);
+	chg_line(CHG_PIN_SCL, 1);
+	chg_line(CHG_PIN_SDA, 1);
+	dbg_delay_us(50);
+	out("bus at rest: SCL ");
+	out_dec(chg_read(CHG_PIN_SCL));
+	out(", SDA ");
+	out_dec(chg_read(CHG_PIN_SDA));
+	out(" (1 and 1: the pull-ups work, so the bus can be read)\n");
+
+	if (!chg_read(CHG_PIN_SCL) || !chg_read(CHG_PIN_SDA)) {
+		out("a line is low: not driving the bus, leaving the part alone\n");
+		chg_pin_restore(&sda, CHG_PIN_SDA);
+		chg_pin_restore(&scl, CHG_PIN_SCL);
+		return;
+	}
+
+	missed = chg_read8(CHG_REG_STATUS, &status);
+	missed |= chg_read8(CHG_REG_FAULT, &fault) << 1;
+	missed |= chg_read8(CHG_REG_ID, &id) << 2;
+	out("0x6a: REG0B ");
+	out_hex(status);
+	out("  REG0C ");
+	out_hex(fault);
+	out("  REG14 ");
+	out_hex(id);
+	if (missed) {
+		out("  acknowledges missed (bit mask) ");
+		out_hex((uint32_t)missed);
+	}
+	out("\n");
+
+	if (!(missed & 4)) {
+		out("  part number ");
+		out_dec((id >> 3) & 7u);
+		out(" = ");
+		out(chg_part_name((id >> 3) & 7u));
+		out(", revision ");
+		out_dec(id & 3u);
+		out("\n");
+	}
+	if (!(missed & 1)) {
+		out("  VBUS_STAT ");
+		out_dec((status >> 5) & 7u);
+		out(" = ");
+		out(chg_vbus_name((status >> 5) & 7u));
+		out(", CHRG_STAT ");
+		out_dec((status >> 3) & 3u);
+		out(" = ");
+		out(chg_chrg_name((status >> 3) & 3u));
+		out(", PG ");
+		out_dec((status >> 2) & 1u);
+		out(", VSYS_STAT ");
+		out_dec(status & 1u);
+		out("\n");
+	}
+
+	out("putting the pins back\n");
+	chg_pin_restore(&sda, CHG_PIN_SDA);
+	chg_pin_restore(&scl, CHG_PIN_SCL);
+}
+#endif /* CHG_PROBE */
+
 void mtkloader_main(uint64_t dtb)
 {
 	uint32_t mark = marker_get();
@@ -3602,6 +3901,16 @@ void mtkloader_main(uint64_t dtb)
 		cam_probe();
 		dbg_delay_ms(4000);
 	}
+	chain_android();
+#endif
+#if CHG_PROBE
+	fb_rect(0, 0, PANEL_W, PANEL_H, 0xff000000u);
+	fbc.x = 0;
+	fbc.y = fbc.top = 0;
+	out("== mtkloader: charger probe (read only) ==\n");
+	chg_probe();
+	out("charger probe done\n");
+	dbg_delay_ms(4000);
 	chain_android();
 #endif
 #if MSDC_TEST
