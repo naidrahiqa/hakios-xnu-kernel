@@ -578,6 +578,18 @@ static const struct platform platform_x6826b __attribute__((unused)) = {
 	.small_cores = 0x3f,
 };
 
+/*
+ * Redmi 10 (selene, Helio G88 / MT6769H): the same MediaTek register map as the X6826B table
+ * above -- GICv3 at 0x0C000000, MT6577-compatible UART at 0x11002000, PSCI SMC, 8x Cortex-A55 +
+ * 2x Cortex-A75.
+ */
+static const struct platform platform_renoi __attribute__((unused)) = {
+	.name = "renoi", .io_base = 0x0c000000, .io_size = 0x14000000,
+	.gic_dist = 0x0c000000, .gic_redist = 0x0c040000, .uart = 0x11002000,
+	.psci_hvc = 0, .cores = 8, .core_shift = 8,
+	.small_cores = 0x3f,
+};
+
 /* ------------------------------------------------------------------------ */
 
 static void
