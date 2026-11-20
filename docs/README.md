@@ -35,6 +35,7 @@ local kit and is not in the tree: each one sets the boot-args and the list of jo
 
 | | |
 | --- | --- |
+| [local-tree.md](local-tree.md) | This copy on the bench: the branches and worktrees, what stays local, the commands that write to the phone |
 | [charger-bq2589x-selene.md](charger-bq2589x-selene.md) | The charger: which part it is (not the RT9471 the README used to name), the bus and its pins, the registers, the order of the driver, and where the work stands |
 
 ## Graphics

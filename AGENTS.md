@@ -104,7 +104,8 @@ Read this document completely before editing files or executing commands.
 | `userland/system.apfs` | 2.31 GiB APFS image containing Apple iOS 16.5 system binaries, frameworks, and dyld shared cache. |
 | `userland/root.apfs` | 4.19 MB APFS ramdisk containing `/sbin/init`, `/stage0`, and bootstrap configurations. |
 | `tools/` | Host automation tools, partition scripts, and BROM handlers. |
-| `tools/setup_ios_brom.py` | Autonomous MediaTek BROM script that carves `xnusys` (4 GiB) on eMMC and flashes `system.apfs` + `boot_a`. |
+| `tools/setup_ios_brom.py` | Autonomous MediaTek BROM script that reads the GPT, carves `xnusys` (4 GiB) if it is missing, and flashes `system.apfs` + `boot_a` after checking that both fit their entries. |
+| `tools/system-flash.sh` | Writes `userland/system.apfs` into `xnusys` from Android with root, after checking the partition size. |
 | `xnu-flashed-slot_a.img` | Ready-to-flash 48.4 MB chainboot image for `boot_a`. |
 
 ---
