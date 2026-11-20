@@ -64,6 +64,12 @@ jump_to_kernel:
     msr     daifset, #0xf
     mov     x16, x0
     mov     x0, x1
+    /* Write back what we built (ramdisk, device tree, boot args) before XNU
+       brings up its own MMU and caches. dcache_clean_all clobbers x0..x11,
+       but leaves the entry in x16 and its save in x17. */
+    mov     x17, x0
+    bl      dcache_clean_all
+    mov     x0, x17
     mrs     x2, CurrentEL
     lsr     x2, x2, #2
     cmp     x2, #2

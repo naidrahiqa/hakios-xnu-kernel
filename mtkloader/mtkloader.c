@@ -1648,7 +1648,8 @@ static void rescue_log(void)
 		return;
 	}
 	find_syms(pi.kernel, &s);
-	if (!s.log || !s.log_len || !s.log_ring_at || !s.log_wrapped) {
+	/* ring_at stays 0 while the log fits in the head: not a missing symbol. */
+	if (!s.log || !s.log_len || !s.log_wrapped) {
 		out("XNU log symbols not found\n");
 		return;
 	}
