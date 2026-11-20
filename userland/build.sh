@@ -158,6 +158,9 @@ if [ "$PREBUILT" = 1 ]; then
 		cmp -s "$f" "obj/$(basename "$f")" || cp "$f" obj/
 	done
 	cp obj/hello hello
+	# init has to be the static Mach-O a Mac's ld64 makes; a Linux build is not.
+	[ "../prebuilt/userland/init" -nt "src/init.c" ] ||
+		echo "build.sh: prebuilt/userland/init is older than src/init.c; build on a Mac with PREBUILT=0 and run tools/update-prebuilt.sh" >&2
 else
 	$CC $LD -o hello src/hello.c
 	$CC -Ilibmini -c libmini/mini.c -o obj/mini.o
