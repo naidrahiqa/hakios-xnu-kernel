@@ -497,7 +497,7 @@ static const struct payload_header *payload_find(void)
 	uint64_t off = hdr[6]; /* res3 */
 	const struct payload_header *ph = (const struct payload_header *)((uint64_t)_start + off);
 
-	if (off == 0 || (off & 15) || ph->magic != PAYLOAD_MAGIC) {
+	if (off == 0 || (off & 15) || ph->magic != PAYLOAD_MAGIC || ph->size > BOARD_BOOT_PARTITION_SIZE) {
 		return NULL;
 	}
 	return ph;
@@ -517,6 +517,9 @@ static int parse_payload(struct payload_info *pi)
 		if (e->name[0] == 0) {
 			break;
 		}
+		if (e->size > (uint64_t)(pend - (p + sizeof(*e)))) {
+			break;          /* the entry runs past the payload */
+		}
 		if (strcmp(e->name, "kernel") == 0) {
 			pi->kernel = p + sizeof(*e);
 			pi->kernel_size = e->size;
@@ -524,7 +527,7 @@ static int parse_payload(struct payload_info *pi)
 			pi->ramdisk = p + sizeof(*e);
 			pi->ramdisk_size = e->size;
 		}
-		p += sizeof(*e) + ((e->size + 15) & ~15u);
+		p += sizeof(*e) + (((uint64_t)e->size + 15) & ~15ull);
 	}
 	return pi->kernel != NULL && ((const struct mach_header_64 *)pi->kernel)->magic == MH_MAGIC_64;
 }
@@ -634,7 +637,7 @@ static int gpt_find(const char *name, uint64_t *lba, uint64_t *blocks)
  * Reads the image into SYSTEM_PA; returns its length, 0 if there is none to read.
  * Unused with XNU_ROOT_EMMC (the default): the kernel reads the eMMC itself. Kept for the md0 path.
  */
-__attribute__((unused)) static uint64_t load_system_image(void)
+static uint64_t load_system_image(void)
 {
 	uint64_t lba, blocks, size = 0, done = 0, t0 = dbg_ticks(), f = dbg_freq();
 
@@ -666,7 +669,7 @@ __attribute__((unused)) static uint64_t load_system_image(void)
 		uint32_t bs = *(volatile uint32_t *)(sector_buf + 36);
 		uint64_t count = *(volatile uint64_t *)(sector_buf + 40);
 
-		if (bs < 512 || bs > 65536 || count == 0 || count > blocks) {
+		if (bs < 512 || bs > 65536 || count == 0 || count > (blocks * 512 - at) / bs) {
 			out("the APFS container at ");
 			out_dec(at / 1024 / 1024);
 			out(" MB says ");
@@ -694,6 +697,10 @@ __attribute__((unused)) static uint64_t load_system_image(void)
 		out("(only the first ");
 		out_dec(SYSTEM_MAX_MB);
 		out(" MB of it, as built)\n");
+	}
+	if (size > XNU_MEM_SIZE - (SYSTEM_PA - XNU_PHYS_BASE)) {
+		out("the image is bigger than XNU's memory leaves for it: not reading it\n");
+		return 0;
 	}
 
 	out("reading ");
@@ -2312,6 +2319,14 @@ static void __attribute__((noreturn)) run_xnu(void)
 				vm_hi = sg->vmaddr + sg->vmsize;
 			}
 			uint64_t dst_pa = kva_to_pa(sg->vmaddr);
+			if (sg->filesize > sg->vmsize ||
+			    sg->fileoff > pi.kernel_size || sg->filesize > pi.kernel_size - sg->fileoff ||
+			    sg->vmaddr < KERNEL_VIRT_BASE || sg->vmsize > XNU_MEM_SIZE ||
+			    sg->vmaddr - KERNEL_VIRT_BASE > XNU_MEM_SIZE - sg->vmsize) {
+				out("ERROR: the kernel's segments do not fit the image or XNU's memory\n");
+				dbg_delay_ms(5000);
+				chain_android();
+			}
 			out(" seg ");
 			out_hex(dst_pa);
 			out(" (");
@@ -2385,7 +2400,7 @@ static void __attribute__((noreturn)) run_xnu(void)
 	 */
 	if (s.log_putc) {
 		/* uart_putc is kprintf's way out, uart_putc_options the console's (and so userland's) */
-		const uint64_t from[2] = { 0, 0 };
+		const uint64_t from[2] = { s.uart_putc, s.uart_putc_options };
 
 		for (int i = 0; i < 2; i++) {
 			if (!from[i]) {
@@ -2447,7 +2462,7 @@ static void __attribute__((noreturn)) run_xnu(void)
 		memcpy((void *)rd_pa, pi.ramdisk, pi.ramdisk_size);
 	}
 	/* and the big one off the flash, if it is there (with XNU_ROOT_EMMC the kernel reads it itself) */
-	uint64_t sys_size = 0;
+	uint64_t sys_size = XNU_ROOT_EMMC ? 0 : load_system_image();
 	uint64_t sys_pa = sys_size ? SYSTEM_PA : 0;
 	uint64_t sys_span = (sys_size + PAGE_SIZE_MAX - 1) & ~(PAGE_SIZE_MAX - 1);
 
@@ -3634,13 +3649,21 @@ chg_bb_delay(void)
 	dbg_delay_us(5);
 }
 
+/* set when a clock released high stayed low: a stuck bus, which the rest of the byte cannot read */
+static int chg_bb_fault;
+
 static void
 chg_scl(int high)
 {
+	int i;
+
 	chg_line(CHG_PIN_SCL, high);
 	if (high) {
-		for (int i = 0; i < 200 && !chg_read(CHG_PIN_SCL); i++) {	/* a device may hold it low */
+		for (i = 0; i < 200 && !chg_read(CHG_PIN_SCL); i++) {	/* a device may hold it low */
 			dbg_delay_us(5);
+		}
+		if (i == 200) {
+			chg_bb_fault = 1;       /* a millisecond and the clock is still low */
 		}
 	}
 	chg_bb_delay();
@@ -3676,7 +3699,7 @@ chg_bb_write(uint8_t byte)
 {
 	int ack;
 
-	for (int i = 7; i >= 0; i--) {
+	for (int i = 7; i >= 0 && !chg_bb_fault; i--) {
 		chg_sda((byte >> i) & 1);
 		chg_scl(1);
 		chg_scl(0);
@@ -3685,7 +3708,7 @@ chg_bb_write(uint8_t byte)
 	chg_scl(1);
 	ack = !chg_read(CHG_PIN_SDA);
 	chg_scl(0);
-	return ack;
+	return ack && !chg_bb_fault;
 }
 
 static uint8_t
@@ -3694,15 +3717,14 @@ chg_bb_read(void)
 	uint8_t byte = 0;
 
 	chg_sda(1);
-	for (int i = 0; i < 8; i++) {
+	for (int i = 0; i < 8 && !chg_bb_fault; i++) {
 		chg_scl(1);
 		byte = (uint8_t)((byte << 1) | (chg_read(CHG_PIN_SDA) ? 1 : 0));
 		chg_scl(0);
 	}
-	chg_sda(0);                     /* one byte a transaction: acknowledge it */
+	chg_sda(1);                     /* the last byte is not acknowledged: I2C's end of data */
 	chg_scl(1);
 	chg_scl(0);
-	chg_sda(1);
 	return byte;
 }
 
@@ -3712,6 +3734,7 @@ chg_read8(uint8_t reg, uint8_t *byte)
 {
 	int missed = 0;
 
+	chg_bb_fault = 0;
 	chg_bb_start();
 	missed |= !chg_bb_write((uint8_t)(CHG_ADDR << 1)) << 0;
 	missed |= !chg_bb_write(reg) << 1;
@@ -3719,6 +3742,9 @@ chg_read8(uint8_t reg, uint8_t *byte)
 	missed |= !chg_bb_write((uint8_t)((CHG_ADDR << 1) | 1)) << 2;
 	*byte = chg_bb_read();
 	chg_bb_stop();
+	if (chg_bb_fault) {
+		missed |= 1 << 3;
+	}
 	return missed;
 }
 
@@ -3778,7 +3804,7 @@ chg_probe(void)
 {
 	struct chg_pin_state scl, sda;
 	uint8_t status = 0, fault = 0, id = 0;
-	int missed;
+	int missed, miss_status, miss_fault, miss_id;
 
 	chg_pin_save(&scl, CHG_PIN_SCL);
 	chg_pin_save(&sda, CHG_PIN_SDA);
@@ -3805,9 +3831,10 @@ chg_probe(void)
 		return;
 	}
 
-	missed = chg_read8(CHG_REG_STATUS, &status);
-	missed |= chg_read8(CHG_REG_FAULT, &fault) << 1;
-	missed |= chg_read8(CHG_REG_ID, &id) << 2;
+	miss_status = chg_read8(CHG_REG_STATUS, &status);
+	miss_fault = chg_read8(CHG_REG_FAULT, &fault);
+	miss_id = chg_read8(CHG_REG_ID, &id);
+	missed = !!miss_status | (!!miss_fault << 1) | (!!miss_id << 2);
 	out("0x6a: REG0B ");
 	out_hex(status);
 	out("  REG0C ");
@@ -3815,12 +3842,15 @@ chg_probe(void)
 	out("  REG14 ");
 	out_hex(id);
 	if (missed) {
-		out("  acknowledges missed (bit mask) ");
+		out("  a reading failed (bit 0 REG0B, 1 REG0C, 2 REG14): ");
 		out_hex((uint32_t)missed);
 	}
 	out("\n");
+	if ((miss_status | miss_fault | miss_id) & 8) {
+		out("  the clock was held low and did not come back: the reading stopped there\n");
+	}
 
-	if (!(missed & 4)) {
+	if (!miss_id) {
 		out("  part number ");
 		out_dec((id >> 3) & 7u);
 		out(" = ");
@@ -3829,7 +3859,7 @@ chg_probe(void)
 		out_dec(id & 3u);
 		out("\n");
 	}
-	if (!(missed & 1)) {
+	if (!miss_status) {
 		out("  VBUS_STAT ");
 		out_dec((status >> 5) & 7u);
 		out(" = ");

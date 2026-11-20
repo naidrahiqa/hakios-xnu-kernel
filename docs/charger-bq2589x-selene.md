@@ -159,7 +159,8 @@ Done, and in the tree:
 * `mtkloader`'s `CHG_PROBE`, off by default so the normal loader is unchanged: build it with
   `mtkloader/build.sh -DCHG_PROBE=1`, flash slot a, and it prints the pins as Android left them,
   reads `REG0B`, `REG0C` and `REG14` by hand, puts the pins back and starts Android, so the log comes
-  back through pstore.
+  back through pstore. A clock held low ends the reading with a line of its own, rather than being
+  read past as if the byte after it were data.
 * `xnu/files/bsd/dev/redwood_bq2589x.c`: a read-only driver behind `bq2589x=1`, bit-banging the same
   two pins, logging the same three registers in the same hex (once, or every reading with
   `bq2589x=2`) and then the decoded readings; wired into `redwood_input.c` and `redwood.patch`.
