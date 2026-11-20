@@ -802,6 +802,10 @@ mount_writable(void)
 	n = fd >= 0 ? read(fd, skeleton, sizeof(skeleton) - 1) : -1;
 	close(fd);
 	skeleton[n > 0 ? n : 0] = 0;
+	if (n == (ssize_t)(sizeof(skeleton) - 1)) {
+		printf("  /etc/var.skel is longer than %zu bytes: the rest was not read\n", sizeof(skeleton) - 1);
+		ok = 0;
+	}
 	for (char *line = skeleton; ok && *line;) {
 		char *end = strchr(line, '\n'), *f[6];
 		int count;
@@ -976,10 +980,14 @@ count_entries(const char *path)
 		return -1;
 	}
 	while ((n = getdirentries(fd, buf, sizeof(buf), &position)) > 0) {
-		for (ssize_t at = 0; at < n; at += ((struct dirent *)(buf + at))->d_reclen) {
-			const char *name = ((struct dirent *)(buf + at))->d_name;
+		for (ssize_t at = 0; at < n;) {
+			const struct dirent *d = (const struct dirent *)(buf + at);
 
-			count += strcmp(name, ".") != 0 && strcmp(name, "..") != 0;
+			if (d->d_reclen == 0) {
+				break;
+			}
+			count += strcmp(d->d_name, ".") != 0 && strcmp(d->d_name, "..") != 0;
+			at += d->d_reclen;
 		}
 	}
 	close(fd);
@@ -1196,7 +1204,8 @@ run_command(char *line)
 		}
 		char *l_argv[64];
 		int l_argc = 0;
-		l_argv[l_argc++] = (char *)"/sbin/launchd";
+		/* stage0, the small image's /sbin/launchd.ios, expects the name launchd runs under */
+		l_argv[l_argc++] = strcmp(argv[1], "/sbin/launchd.ios") == 0 ? (char *)"/sbin/launchd" : argv[1];
 		for (int i = 2; i < argc && l_argc < 63; i++) {
 			l_argv[l_argc++] = argv[i];
 		}
@@ -1250,6 +1259,9 @@ run_rc(const char *path)
 	n = read(fd, script, sizeof(script) - 1);
 	close(fd);
 	script[n > 0 ? n : 0] = 0;
+	if (n == (ssize_t)(sizeof(script) - 1)) {
+		printf("  %s is longer than %zu bytes: only the start is run\n", path, sizeof(script) - 1);
+	}
 
 	printf("\n=== %s ===\n", path);
 	for (char *line = script; *line;) {

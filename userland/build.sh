@@ -145,8 +145,13 @@ if [ -n "$APPLEID" ]; then
 fi
 mkdir -p obj
 
-PREBUILT=${PREBUILT:-1}
-if [ -n "$PREBUILT" ]; then
+# PREBUILT=1: the programs from ../prebuilt/userland; PREBUILT=0: compile them. Unset: compile on a
+# Mac with ld64, and take the prebuilt ones anywhere else (on Linux the compiler does not make init
+# the static Mach-O with LC_UNIXTHREAD it has to be).
+if [ -z "${PREBUILT:-}" ]; then
+	if [ "$(uname -s)" = Darwin ] && command -v ld64 >/dev/null; then PREBUILT=0; else PREBUILT=1; fi
+fi
+if [ "$PREBUILT" = 1 ]; then
 	echo "build.sh: not compiling, using the programs in prebuilt/userland"
 	for f in ../prebuilt/userland/*; do
 		# keep a file that did not change (and its time stamp): system.apfs depends on stage0
@@ -183,7 +188,7 @@ cp ${RC_JOBS:-rc.jobs.unlock} root/etc/rc.jobs
 # 300000 bytes, byte i = (i*31 + (i>>8)) & 0xff; init verifies it through read() and mmap()
 python3 -c "import sys; sys.stdout.buffer.write(bytes((i*31 + (i>>8)) & 0xff for i in range(300000)))" > root/share/pattern.bin
 if [ -d $IOS/rootfs/usr/lib ]; then
-	if [ -z "$PREBUILT" ] && [ -d "${THEOS:-$HOME/theos}/sdks/iPhoneOS16.5.sdk" ]; then
+	if [ "$PREBUILT" = 0 ] && [ -d "${THEOS:-$HOME/theos}/sdks/iPhoneOS16.5.sdk" ]; then
 		# ordinary dynamically linked programs of our own, built against the iOS SDK
 		$DYN -o obj/hello_dyn src/hello_dyn.c
 		$DYN -framework CoreFoundation -o obj/svc_test src/svc_test.c

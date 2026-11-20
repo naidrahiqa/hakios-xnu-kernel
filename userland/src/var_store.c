@@ -731,6 +731,9 @@ gather_names(int dir_fd, char *buf, size_t bufsize, uint64_t mark_a, uint64_t ma
 			const char *name = d->d_name;
 			size_t len = strlen(name);
 
+			if (d->d_reclen == 0) {
+				break;
+			}
 			i += d->d_reclen;
 			if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) {
 				continue;
