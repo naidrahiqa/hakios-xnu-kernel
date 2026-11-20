@@ -4,7 +4,6 @@ import os
 import struct
 import sys
 import uuid
-import time
 
 sys.path.insert(0, '/home/naidra/mtkclient')
 from mtkclient.config.mtk_config import MtkConfig
@@ -16,10 +15,7 @@ ROOT = os.path.dirname(HERE)
 SYSTEM_APFS = os.path.join(ROOT, "userland", "system.apfs")
 BOOT_IMG = os.path.join(ROOT, "xnu-flashed-slot_a.img")
 
-TOTAL_SECTORS = 244156352
 SECTOR_SIZE = 512
-XNUSYS_SECTOR = 235765760
-BOOT_A_SECTOR = 1019904
 NEW_SECTORS = 8 * 1024 * 1024  # 4 GiB
 ALIGN = 2048
 
@@ -32,43 +28,82 @@ def name_of(entry):
     return entry[56:128].decode("utf-16-le").rstrip("\0")
 
 
-def check_and_carve_gpt(mtk):
-    print("[*] Checking eMMC GPT for 'xnusys' partition...")
-    # Read Primary GPT (sectors 0..33 = 34 sectors = 17408 bytes)
+def find_partition(entries, name):
+    for e in entries:
+        if e[0:16] != b"\0" * 16 and name_of(e) == name:
+            return struct.unpack_from("<QQ", e, 32)
+    return None
+
+
+def read_gpt(mtk):
+    print("[*] Reading the GPT...")
     pri = bytearray(mtk.daloader.readflash(addr=0, length=34 * 512, filename="", parttype="user", display=False))
     if len(pri) < 34 * 512:
-        sys.exit("[-] Failed to read primary GPT")
-
-    # Read Backup GPT (last 33 sectors = 16896 bytes)
-    sec_addr = (TOTAL_SECTORS - 33) * 512
-    sec = bytearray(mtk.daloader.readflash(addr=sec_addr, length=33 * 512, filename="", parttype="user", display=False))
-    if len(sec) < 33 * 512:
-        sys.exit("[-] Failed to read backup GPT")
+        sys.exit("[-] Failed to read the primary GPT")
 
     sig, rev, hsize, hcrc, _, mylba, altlba, first, last = struct.unpack_from("<8sIIIIQQQQ", pri, 512)
+    if sig != b"EFI PART":
+        sys.exit("[-] The primary GPT has no EFI PART signature")
     entlba, nent, entsize, entcrc = struct.unpack_from("<QIII", pri, 512 + 72)
-    assert sig == b"EFI PART", "Invalid GPT signature"
-
-    ents = pri[entlba * 512: entlba * 512 + nent * entsize]
+    if nent == 0 or entsize < 128 or nent * entsize > 32 * 512:
+        sys.exit(f"[-] The GPT's entry array is not one this script understands ({nent} x {entsize})")
+    if altlba < 34:
+        sys.exit(f"[-] The GPT says the backup header is at LBA {altlba}")
+    ents = pri[entlba * 512:entlba * 512 + nent * entsize]
+    if len(ents) != nent * entsize:
+        sys.exit("[-] The primary GPT's entry array is outside the blocks read")
     entries = [bytearray(ents[i * entsize:(i + 1) * entsize]) for i in range(nent)]
-    
-    has_xnusys = any(name_of(e) == "xnusys" for e in entries if e[0:16] != b"\0" * 16)
-    if has_xnusys:
-        print("[+] 'xnusys' partition already exists in GPT!")
+
+    sec_addr = (altlba - 32) * 512
+    sec = bytearray(mtk.daloader.readflash(addr=sec_addr, length=33 * 512, filename="", parttype="user", display=False))
+    if len(sec) < 33 * 512:
+        sys.exit("[-] Failed to read the backup GPT")
+    bak_hdr = sec[len(sec) - 512:]
+    if bak_hdr[:8] != b"EFI PART":
+        sys.exit("[-] The backup GPT has no EFI PART signature")
+    if struct.unpack_from("<Q", bak_hdr, 24)[0] != altlba:
+        sys.exit("[-] The backup header is not where the primary header says it is")
+    bak_entlba = struct.unpack_from("<Q", bak_hdr, 72)[0]
+    bak_off = (bak_entlba - (altlba - 32)) * 512
+    if bak_off < 0 or bak_off + nent * entsize > len(sec) - 512:
+        sys.exit("[-] The backup GPT's entry array is outside the blocks read")
+    if bytes(sec[bak_off:bak_off + nent * entsize]) != bytes(ents):
+        sys.exit("[-] The primary and backup GPT entries differ; nothing written")
+    return pri, sec, entries, {
+        "altlba": altlba,
+        "entlba": entlba,
+        "nent": nent,
+        "entsize": entsize,
+        "hsize": hsize,
+        "sec_addr": sec_addr,
+        "bak_off": bak_off,
+    }
+
+
+def carve_gpt(mtk, pri, sec, entries, gpt):
+    if find_partition(entries, "xnusys") is not None:
+        print("[+] 'xnusys' already exists; using its GPT entry.")
         return
 
     print("[*] 'xnusys' not found. Carving 4 GiB off 'userdata'...")
-    victim = next(i for i, e in enumerate(entries) if name_of(e) == "userdata")
-    free = next(i for i, e in enumerate(entries) if e[0:16] == b"\0" * 16)
+    victim = next((i for i, e in enumerate(entries)
+                   if e[0:16] != b"\0" * 16 and name_of(e) == "userdata"), None)
+    free = next((i for i, e in enumerate(entries) if e[0:16] == b"\0" * 16), None)
+    if victim is None or free is None:
+        sys.exit("[-] The GPT has no 'userdata' entry or no free entry")
     vstart, vend = struct.unpack_from("<QQ", entries[victim], 32)
-
     new_start = (vend + 1 - NEW_SECTORS) & ~(ALIGN - 1)
     new_end = vend
-    assert new_start == XNUSYS_SECTOR, f"Calculated start {new_start} != expected {XNUSYS_SECTOR}"
+    if new_start <= vstart + ALIGN:
+        sys.exit("[-] 'userdata' is too small to give 4 GiB")
+    for i, e in enumerate(entries):
+        if i == victim or e[0:16] == b"\0" * 16:
+            continue
+        s, l = struct.unpack_from("<QQ", e, 32)
+        if s <= new_end and l >= new_start:
+            sys.exit(f"[-] '{name_of(e)}' is in the way of the new partition")
 
-    # Shrink userdata
     struct.pack_into("<QQ", entries[victim], 32, vstart, new_start - 1)
-    # Create xnusys
     e = entries[free]
     e[0:16] = uuid.UUID("0fc63daf-8483-4772-8e79-3d69d8477de4").bytes_le
     e[16:32] = uuid.uuid4().bytes_le
@@ -76,26 +111,44 @@ def check_and_carve_gpt(mtk):
     e[56:128] = "xnusys".encode("utf-16-le").ljust(72, b"\0")
 
     new_ents = b"".join(bytes(x) for x in entries)
-    pri[entlba * 512: entlba * 512 + len(new_ents)] = new_ents
-
-    # Recompute Primary Header CRC
+    pri[gpt["entlba"] * 512:gpt["entlba"] * 512 + len(new_ents)] = new_ents
     struct.pack_into("<I", pri, 512 + 16, 0)
     struct.pack_into("<I", pri, 512 + 84, crc32(new_ents))
-    struct.pack_into("<I", pri, 512 + 16, crc32(bytes(pri[512:512 + hsize])))
+    struct.pack_into("<I", pri, 512 + 16, crc32(bytes(pri[512:512 + gpt["hsize"]])))
 
-    # Recompute Backup Header CRC
-    sec_entlba = TOTAL_SECTORS - 1 - (nent * entsize // 512)
-    sec[:len(new_ents)] = new_ents
+    sec[gpt["bak_off"]:gpt["bak_off"] + len(new_ents)] = new_ents
     struct.pack_into("<I", sec, len(sec) - 512 + 16, 0)
     struct.pack_into("<I", sec, len(sec) - 512 + 84, crc32(new_ents))
-    struct.pack_into("<I", sec, len(sec) - 512 + 16, crc32(bytes(sec[len(sec) - 512:len(sec) - 512 + hsize])))
+    struct.pack_into("<I", sec, len(sec) - 512 + 16,
+                     crc32(bytes(sec[len(sec) - 512:len(sec) - 512 + gpt["hsize"]])))
 
-    print("[*] Writing updated Primary GPT to eMMC...")
-    mtk.daloader.writeflash(addr=0, length=len(pri), filename="", wdata=bytes(pri), parttype="user", display=False)
+    print("[*] Writing the updated primary GPT...")
+    if not mtk.daloader.writeflash(addr=0, length=len(pri), filename="", wdata=bytes(pri),
+                                   parttype="user", display=False):
+        sys.exit("[-] Failed to write the primary GPT")
+    print("[*] Writing the updated backup GPT...")
+    if not mtk.daloader.writeflash(addr=gpt["sec_addr"], length=len(sec), filename="", wdata=bytes(sec),
+                                   parttype="user", display=False):
+        sys.exit("[-] Failed to write the backup GPT")
+    print("[+] Carved 'xnusys' (4 GiB) in both GPT copies.")
 
-    print("[*] Writing updated Backup GPT to eMMC...")
-    mtk.daloader.writeflash(addr=sec_addr, length=len(sec), filename="", wdata=bytes(sec), parttype="user", display=False)
-    print("[+] Successfully carved 'xnusys' (4 GiB) in Primary and Backup GPT!")
+
+def write_image(mtk, name, entries, path, unit):
+    part = find_partition(entries, name)
+    if part is None:
+        sys.exit(f"[-] The GPT has no '{name}' partition")
+    first, last = part
+    size = os.path.getsize(path)
+    capacity = (last - first + 1) * SECTOR_SIZE
+    if size > capacity:
+        sys.exit(f"[-] {path} is {size} bytes, more than the {capacity} of '{name}'")
+    amount = size / unit
+    print(f"[*] Writing {os.path.basename(path)} ({amount:.2f} {'GB' if unit == 1024**3 else 'MB'}) "
+          f"to '{name}' at LBA {first}...")
+    if not mtk.daloader.writeflash(addr=first * SECTOR_SIZE, length=size, filename=path,
+                                   parttype="user", display=True):
+        sys.exit(f"[-] Failed to write {path} to '{name}'")
+    print(f"[+] Wrote '{name}'.")
 
 
 def main():
@@ -124,36 +177,15 @@ def main():
 
     print("[+] DA Stage 2 loaded successfully!")
 
-    if not boot_only:
-        # 1. Ensure xnusys partition exists
-        check_and_carve_gpt(mtk)
+    pri, sec, entries, gpt = read_gpt(mtk)
 
-        # 2. Write system.apfs to xnusys
-        xnusys_addr = XNUSYS_SECTOR * 512
-        apfs_size = os.path.getsize(SYSTEM_APFS)
-        print(f"[*] Writing system.apfs ({apfs_size / (1024**3):.2f} GB) to 'xnusys' at sector {XNUSYS_SECTOR}...")
-        if not mtk.daloader.writeflash(addr=xnusys_addr,
-                                       length=apfs_size,
-                                       filename=SYSTEM_APFS,
-                                       parttype="user",
-                                       display=True):
-            sys.exit(f"[-] Failed to write {SYSTEM_APFS} to xnusys")
-        print("[+] Successfully wrote system.apfs to xnusys!")
+    if not boot_only:
+        carve_gpt(mtk, pri, sec, entries, gpt)
+        write_image(mtk, "xnusys", entries, SYSTEM_APFS, 1024**3)
     else:
         print("[*] Skipping system.apfs (--boot-only requested)")
 
-    # 3. Write XNU boot image to boot_a
-    boot_a_addr = BOOT_A_SECTOR * 512
-    boot_size = os.path.getsize(BOOT_IMG)
-    print(f"[*] Writing XNU boot image ({boot_size / (1024**2):.2f} MB) to 'boot_a' at sector {BOOT_A_SECTOR}...")
-    if not mtk.daloader.writeflash(addr=boot_a_addr,
-                                   length=boot_size,
-                                   filename=BOOT_IMG,
-                                   parttype="user",
-                                   display=True):
-        print("[-] Warning: Failed to write boot_a via DA")
-    else:
-        print("[+] Successfully wrote XNU kernel to boot_a!")
+    write_image(mtk, "boot_a", entries, BOOT_IMG, 1024**2)
 
     print("\n" + "="*50)
     print("[+] ALL DONE! Phone is ready to boot iOS 16.5!")
