@@ -62,7 +62,7 @@ index a4d25040f38f..aad72993d139 100644
  kern_debug.o_INCFLAGS += -I$(SRCROOT)/osfmk
  
 diff --git a/bsd/conf/files b/bsd/conf/files
-index 44274016a4cf..4ab7ca03b301 100644
+index 44274016a4cf..870f951c0109 100644
 --- a/bsd/conf/files
 +++ b/bsd/conf/files
 @@ -109,6 +109,52 @@ bsd/dev/munge.c 			optional config_requires_u32_munging
@@ -2052,7 +2052,7 @@ index 0316792a3f42..c339b8b7911b 100644
  # Assume LTO scaling by default, unless it is being explicitly passed on the command-line
  LARGE_BUILD_FOOTPRINT := $(if $(BUILD_LTO),$(BUILD_LTO),1)
 diff --git a/osfmk/arm/arm_init.c b/osfmk/arm/arm_init.c
-index e26a1d70f470..f91095c98d26 100644
+index e26a1d70f470..7fa3eb33004f 100644
 --- a/osfmk/arm/arm_init.c
 +++ b/osfmk/arm/arm_init.c
 @@ -73,6 +73,9 @@
@@ -2113,7 +2113,34 @@ index e26a1d70f470..f91095c98d26 100644
  
  	chosen = NULL; // Force a re-lookup later on since VM addresses are not final at this point
  	dt_entry_size = 0;
-@@ -422,10 +436,13 @@ arm_init(
+@@ -395,6 +409,18 @@ arm_init(
+ 		/*
+ 		 * Select the advertised kernel page size.
+ 		 */
++#if defined(BCM2837)
++		/*
++		 * HakiOS: iOS 16.5's userland and its dyld shared cache are
++		 * signed with 16 KiB pages, and bsd/kern/ubc_subr.c rejects a
++		 * code directory whose page shift is not PAGE_SHIFT.  This board
++		 * gives XNU 992 MiB of RAM, below the > 1 GiB threshold that
++		 * selects 16 KiB below, so select it here.  The pmap keeps the
++		 * 4 KiB hardware granule: one 16 KiB VM page is four PTEs
++		 * (PAGE_RATIO), as on the ports whose loader gives XNU > 1 GiB.
++		 */
++		PAGE_SHIFT_CONST = PAGE_MAX_SHIFT;
++#else /* !BCM2837 */
+ 		if (args->memSize > 1ULL * 1024 * 1024 * 1024) {
+ 			/*
+ 			 * arm64 device with > 1GB of RAM:
+@@ -409,6 +435,7 @@ arm_init(
+ 			 */
+ 			PAGE_SHIFT_CONST = ARM_PGSHIFT;
+ 		}
++#endif /* !BCM2837 */
+ 
+ 		/* 32-bit apps always see 16KB page size */
+ 		page_shift_user32 = PAGE_MAX_SHIFT;
+@@ -422,10 +449,13 @@ arm_init(
  	}
  #endif
  
@@ -2127,7 +2154,7 @@ index e26a1d70f470..f91095c98d26 100644
  	assert(master_cpu >= 0 && master_cpu <= ml_get_max_cpu_number());
  
  	BootCpuData.cpu_number = (unsigned short)master_cpu;
-@@ -439,11 +456,14 @@ arm_init(
+@@ -439,11 +469,14 @@ arm_init(
  	CpuDataEntries[master_cpu].cpu_data_paddr = (void *)((uintptr_t)(args->physBase)
  	    + ((uintptr_t)&BootCpuData
  	    - (uintptr_t)(args->virtBase)));
@@ -2142,7 +2169,7 @@ index e26a1d70f470..f91095c98d26 100644
  
  	/*
  	 * Preemption is enabled for this thread so that it can lock mutexes without
-@@ -452,12 +472,16 @@ arm_init(
+@@ -452,12 +485,16 @@ arm_init(
  	 * preemption level is not really meaningful for the bootstrap thread.
  	 */
  	thread->machine.preemption_count = 0;
@@ -2159,7 +2186,7 @@ index e26a1d70f470..f91095c98d26 100644
  
  	/*
  	 * Initialize the timer callout world
-@@ -465,6 +489,7 @@ arm_init(
+@@ -465,6 +502,7 @@ arm_init(
  	timer_call_init();
  
  	cpu_init();
@@ -2167,7 +2194,7 @@ index e26a1d70f470..f91095c98d26 100644
  
  	processor_bootstrap();
  
-@@ -514,6 +539,7 @@ arm_init(
+@@ -514,6 +552,7 @@ arm_init(
  #endif  /* __ARM_PAN_AVAILABLE__ */
  
  	arm_vm_init(xmaxmem, args);
@@ -2175,7 +2202,7 @@ index e26a1d70f470..f91095c98d26 100644
  
  	if (debug_boot_arg) {
  		patch_low_glo();
-@@ -527,7 +553,9 @@ arm_init(
+@@ -527,7 +566,9 @@ arm_init(
  
  	/* Setup debugging output. */
  	const unsigned int serial_exists = serial_init();
@@ -2185,7 +2212,7 @@ index e26a1d70f470..f91095c98d26 100644
  	kprintf("kprintf initialized\n");
  
  	serialmode = 0;
-@@ -569,6 +597,7 @@ arm_init(
+@@ -569,6 +610,7 @@ arm_init(
  		disableConsoleOutput = FALSE;     /* Allow printfs to happen */
  	}
  	PE_create_console();
@@ -2193,7 +2220,7 @@ index e26a1d70f470..f91095c98d26 100644
  
  	/* setup console output */
  	PE_init_printf(FALSE);
-@@ -647,6 +676,7 @@ arm_init(
+@@ -647,6 +689,7 @@ arm_init(
  	 * against string vulnerabilities
  	 */
  	__stack_chk_guard &= ~(0xFFULL << 8);
@@ -2201,7 +2228,7 @@ index e26a1d70f470..f91095c98d26 100644
  	machine_startup(args);
  }
  
-@@ -673,6 +703,9 @@ arm_init_cpu(
+@@ -673,6 +716,9 @@ arm_init_cpu(
  
  
  	machine_set_current_thread(cpu_data_ptr->cpu_active_thread);
