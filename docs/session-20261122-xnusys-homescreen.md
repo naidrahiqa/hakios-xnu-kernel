@@ -124,7 +124,13 @@ Dipisah ke dokumen sendiri: `docs/plan-20261122-next.md` (upstream sync `mtk`, d
 
 ## File log sesi
 
+- Log hari ini tetap flat di `logs/` (referensi dokumen ini valid); log 2026-11-21 diarsip ke
+  `logs/2026-11-21/`. Payload varian lama → `backup/payloads/`; `xnu-selene.img` stale
+  (2026-11-15) → `backup/xnu-selene-20261115.img`. 30 image boot di workspace →
+  `../boot-images/`.
 - `logs/qemu-repro-20261122-1250.log` — QEMU boot penuh
+- `logs/mesa-build-20261122-1650.log`, `logs/userland-gl-build-20261122-1654.log` — build GL=1
 - `logs/xnusys-fixed-20261122-1412.log` / `-pmsg.log` / `-c2.log` — run 20 s pertama (loop mati)
-- `logs/ios180-cpu4-rescue*/` — upaya rescue pstore (semua 0 byte, Android tidak pernah hidup
-  via USB sejak 14:21)
+- `logs/gl1-run-20261122-1742/` — **console-ramoops = Android bootloop-era, BUKAN log XNU GL1**;
+  log XNU GL1 hilang ditimpa boot Android berikutnya. Pelajaran: capture pstore harus sebelum
+  boot Android lain setelah run XNU. Bukti GL1 tinggal foto layar user.
