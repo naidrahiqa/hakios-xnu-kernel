@@ -82,6 +82,30 @@ kernel/userland; fix = tulis `userland/system.apfs` baru (604423 blocks) ke `xnu
 - QEMU: `!SpringBoard hang` `_BKSDisplayGetMainScreenInfo` — cek apakah juga muncul di
   hardware (MiniIOMobileFramebuffer selector 15/57 not implemented).
 
+## Verbose vs non-verbose (layar & bukti)
+
+Keduanya menulis log yang sama secara internal (`loader_log`, ramoops saat return); bedanya
+hanya apakah log digambar ke framebuffer secara live (`-v`, dari `-DXNU_VERBOSE=1`).
+
+| | Non-verbose (`XNUONLY-GPU-1444`, dsb.) | Verbose (`VERBOSE-STOCK-1551`) |
+| :--- | :--- | :--- |
+| Layar saat boot | Boot animation Apple normal, lalu UI | Console kernel live **menimpa** boot animation |
+| Logo Redmi/bootanim | Terlihat | Tertimpa teks sejak mtkloader menggambar |
+| Progres boot | Hanya dari mata (hitam → homescreen) | Terlihat per baris (`launchd` → `backboardd` → `SpringBoard`) |
+| Diagnosis hang | Butuh pstore (butuh Android hidup) | Foto ekor console = bukti langsung |
+| Rumor "GPU gagal/bootanim hilang" | — | Bukan gagal: framebuffer dipakai log; UI tetap menggambar di bawah/di atasnya |
+
+Pengalaman sesi:
+
+- `VERBOSE-LIVE-1548` (chain Bakasu): bootloop logo Redmi — konsisten dengan pola image
+  Bakasu, bukan efek verbose.
+- `VERBOSE-STOCK-1551` (chain stock): console jalan panjang tanpa panic; warning
+  `persona_find_by_type` non-fatal; boot sampai fase SpringBoard. Boot animation memang
+  tidak terlihat karena ketimpa — bukan gejala GPU.
+
+Aturan pakai: eksperimen/perbaikan = verbose (kelihatan di mana berhenti); demonstrasi pakai =
+non-verbose (boot anim jalan, homescreen bersih).
+
 ## Status akhir sesi
 
 - Upaya rescue pstore via Android gagal semua (kernel stock di chain 14:21+, lalu bootloop
