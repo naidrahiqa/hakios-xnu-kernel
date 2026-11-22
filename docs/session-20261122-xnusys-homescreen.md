@@ -106,39 +106,10 @@ Pengalaman sesi:
 Aturan pakai: eksperimen/perbaikan = verbose (kelihatan di mana berhenti); demonstrasi pakai =
 non-verbose (boot anim jalan, homescreen bersih).
 
-## Rencana minggu depan (dicatat 2026-11-22)
+## Rencana ke depan
 
-### 1. Upstream sync (murah, risiko rendah)
-- Upstream pindah ke `github.com/oosexgang/hakios-xnu-kernel` (local remote `oosex`, sudah di-fetch).
-- Branch `mtk`: **7 commits ahead** (tip Nov 10) — `docs/from-a-clone.md` + fix build Mac/Linux
-  (`userland/build.sh` tanpa GNU `cp -al`/`sha256sum`/`stat -c`, `xnu-cycle.sh` cek adb/fastboot,
-  `build_flashed.py` sebut image mana yang missing, zig 0.13.0 by SHA-256). Sync ke `mtk-selene`.
-- Branch `common` (+2387 commits, tip 2026-11-22 "Prepare Darwin bring-up for companion loader
-  repo"): restructure besar — **jangan disync sekarang**; tunggu sampai GL + dual-boot path jelas.
-- `legacy-hackios` = arsip.
-
-### 2. Dual boot tanpa PC — `github.com/oosexgang/hakios-uefi`
-- Clone analisis: `/tmp/opencode/hakios-uefi` (tip 2026-11-21).
-- U-Boot sebagai Android boot image (RAM-boot, pola chainboot kita) → EFI loader handoff;
-  **HKUB container dari SD-card FAT32** = pilih OS di HP tanpa fastboot; ada USB recovery
-  transport + perintah load image dari U-Boot → berpotensi nyeleniin problem observability
-  (log tanpa Android hidup) dan problem chain Android yang bootloop.
-- Realita: **"There are no device profiles in this repository yet"** — tiap board butuh profil
-  (DRAM map, DT, storage, USB DC, display; lihat `docs/porting-a-board.md`). MT6769 belum ada
-  upstream U-Boot board files. Selene butuh U-Boot SETELAH LK (DRAM sudah di-init preloader) —
-  GUESS, belum kebukti polanya jalan.
-- Katalisator: profil Infinix **TD4160** (MT6769, referensi Mali step 6 of 6 di commit `mtk`)
-  kalau muncul di portal → porting selene jadi jauh lebih murah.
-- Pekerjaan: profil `platform/xiaomi/selene/` (defconfig, overlay DT, `local-firmware/` DTB),
-  tes RAM-boot tanpa sentuh GPT/partisi critical dulu.
-
-### 3. Lanjutan eksperimen HP (urutan lama, tetap berlaku)
-- Hasil eksperimen GL=1 (`xnu-selene-boot_a-GL1-20261122-1658.img`, sha256 `883c40ad…`) —
-  penentu: baris `mali: step 6 of 6; user space says … N clients` dengan N > 0.
-- Battery `mtkbatt=1` + `bq2589x=1`; GPU depth `metal=1` + `fbscale=3`; connsys/scp butuh
-  `pull-firmware.sh` (butuh Android hidup).
-- `backup/boot_a.img` Bakasu bootloop — tersangka tetap chain path mtkloader HEAD;
-  tes mtkloader `fd68492` (blob NEWINIT `img[0:0x40000]`) + Image Bakasu + payload kini.
+Dipisah ke dokumen sendiri: `docs/plan-20261122-next.md` (upstream sync `mtk`, dual boot
+`hakios-uefi`, urutan eksperimen HP, status eksperimen GL=1).
 
 ## Status akhir sesi
 
