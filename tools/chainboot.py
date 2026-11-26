@@ -116,6 +116,11 @@ def main():
     second = d[off:off + ssize]; off += pages(ssize)
     rdo = d[off:off + rdo_size]; off += pages(rdo_size)
     dtb = d[off:off + dtb_size]
+    assert len(kernel) == ksize, f'{src}: truncated kernel ({len(kernel)} < {ksize})'
+    assert len(ramdisk) == rsize, f'{src}: truncated ramdisk ({len(ramdisk)} < {rsize})'
+    assert len(second) == ssize, f'{src}: truncated second ({len(second)} < {ssize})'
+    assert len(rdo) == rdo_size, f'{src}: truncated recovery dtbo ({len(rdo)} < {rdo_size})'
+    assert len(dtb) == dtb_size, f'{src}: truncated dtb ({len(dtb)} < {dtb_size})'
 
     if kernel[:2] == b'\x1f\x8b':
         import zlib

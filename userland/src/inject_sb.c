@@ -419,6 +419,9 @@ gpu_draws(void)
 		}
 	}
 	gpu = IOServiceGetMatchingService(0, IOServiceMatching("RedwoodGPU"));
+	if (gpu == 0) {
+		gpu = IOServiceGetMatchingService(0, IOServiceMatching("RedwoodMali"));
+	}
 	if (gpu != 0) {
 		IOObjectRelease(gpu);
 	}
